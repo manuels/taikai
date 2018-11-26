@@ -1,14 +1,12 @@
 use proc_macro2::TokenStream;
 
 use crate::type_spec::TypeSpec;
+use crate::type_spec::Type;
 
 pub struct Attribute {
     pub id: String,
     pub typ: String,
-
-    //parent: &'a TypeSpec<'a>,
 }
-
 
 impl Attribute {
     pub fn name(&self) -> TokenStream {
@@ -16,24 +14,21 @@ impl Attribute {
     }
 
     pub fn read_final_struct_call<'a>(&self,
-        typ: &TypeSpec<'a>,
+        typ: Type<'a>,
         parent_precursors: Vec<TokenStream>,
         root_precursor: TokenStream) -> TokenStream
     {
-        let typ = typ.absolute_final_path();
-        let read_fn = TypeSpec::build_function_name("read", parent_precursors, Some(root_precursor));
+        match typ {
+            Type::Primitive(_) if self.typ == "u8" => quote!( nom::be_u8(_input) ),
+            Type::Custom(typ) => {
+                let typ = typ.absolute_final_path();
+                let read_fn = TypeSpec::build_function_name("read", parent_precursors, Some(root_precursor));
 
-        quote!(
-            #typ :: #read_fn (_input, &_new_parents, _new_root, _meta, _ctx)
-        )
+                quote!(
+                    #typ :: #read_fn (_input, &_new_parents, _new_root, _meta, _ctx)
+                )
+            }
+            _ => unimplemented!("Attribute::read_final_struct_call(): type '{}'", self.typ),
+        }
     }
-/*
-    pub fn read_impl<'a>(&self,
-        typ: &TypeSpec<'a>,
-        parent_precursors: Vec<TokenStream>,
-        root_precursor: TokenStream) -> TokenStream
-    {
-        typ.impl_final_read(parent_precursors, Some(root_precursor))
-    }
-*/
 }

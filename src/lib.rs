@@ -28,7 +28,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut subtypes = HashMap::new();
     subtypes.insert("bar".into(), subtyp);
 
-    let seq = vec![("baz", "bar")];
+    let seq = vec![("i", "u8"), ("baz", "bar"), ("j", "u8")];
 
     let typ = TypeSpec::new(vec![quote!(crate), quote!(test_simple)],
         "foo".into(),
@@ -49,8 +49,8 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         #final_impl
 
         impl #root {
-            pub fn read(_meta: &Meta, _ctx: &Context) -> IoResult<Self> {
-                Self::read______None(&(), &(), _meta, _ctx)
+            pub fn read<'a>(_input: &'a [u8], _meta: &Meta, _ctx: &Context) -> IoResult<'a, Self> {
+                Self::read______None(_input, &(), &(), _meta, _ctx)
             }
         }
     );

@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate taikai;
 
+extern crate tuple_utils;
+
 mod test_simple {
     test_simple!(foo);
 
@@ -8,9 +10,12 @@ mod test_simple {
     fn test_simple() {
         let meta = Meta {};
         let ctx = Context {};
-        let obj = Foo::read(&[0xab], &meta, &ctx);
-        assert_eq!(obj.unwrap(), Foo {
-            baz: __subtypes::Bar {i: 0xab}
-        })
+        let (rest, obj) = Foo::read(&[0x01, 0xab, 0x99], &meta, &ctx).unwrap();
+        assert_eq!(obj, Foo {
+            i: 0x01,
+            baz: __subtypes::Bar {i: 0xab},
+            j: 0x99,
+        });
+        assert_eq!(rest.len(), 0);
     }
 }

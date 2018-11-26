@@ -4,11 +4,42 @@ use heck::CamelCase;
 use proc_macro2::TokenStream;
 use crate::attribute::Attribute;
 
-pub enum Type<'a> {
-    Primitive(String),
-    Custom(TypeSpec<'a>),
-}
 // TODO: use MarkedTokenStream instead of TokenStream
+
+#[derive(Clone)]
+pub enum Type<'a> {
+    Primitive(TokenStream),
+    Custom(&'a TypeSpec<'a>),
+}
+
+impl<'a> Type<'a> {
+    pub fn absolute_final_path(&'a self) -> TokenStream {
+        match self {
+            Type::Primitive(p) => p.clone(),
+            Type::Custom(s) => s.absolute_final_path(),
+        }
+    }
+
+    pub fn impl_final_read(&'a self,
+        parent_precursors: Vec<TokenStream>,
+        root_precursor: Option<TokenStream>) -> TokenStream
+    {
+        match self {
+            Type::Primitive(_) => quote!(),
+            Type::Custom(s) => s.impl_final_read(parent_precursors, root_precursor),
+        }
+    }
+
+    pub fn impl_precursor_reads(&'a self,
+        parent_precursors: Vec<TokenStream>,
+        root_precursor: Option<TokenStream>) -> Vec<TokenStream>
+    {
+        match self {
+            Type::Primitive(_) => vec![],
+            Type::Custom(s) => s.impl_precursor_reads(parent_precursors, root_precursor),
+        }
+    }
+}
 
 pub struct TypeSpec<'a> {
     supa: Option<&'a TypeSpec<'a>>,
@@ -51,19 +82,19 @@ impl<'a> TypeSpec<'a> {
 
 
 impl<'a> TypeSpec<'a> {
-    pub fn resolve(&'a self, mut path: Vec<&str>) -> &'a TypeSpec {
+    pub fn resolve(&'a self, mut path: Vec<&str>) -> Type<'a> {
         if path.is_empty() {
-            return self;
+            return Type::Custom(self);
         }
 
         if path == vec!["u8"] {
-            return path;
+            return Type::Primitive(quote!(u8));
         }
 
         let orig_path = path.clone();
         match path.remove(0) {
-            "super" => self.supa.unwrap_or_else(|| unreachable!()),
-            "root" => self.root.unwrap_or(self),
+            "super" => Type::Custom(self.supa.unwrap_or_else(|| unreachable!())),
+            "root" => Type::Custom(self.root.unwrap_or(self)),
             n => {
                 let typ = self.types.get(n);
                 let typ = typ.unwrap_or_else(|| panic!("Could not resolve type '{}'!", orig_path.join("::")));
@@ -120,7 +151,7 @@ impl<'a> TypeSpec<'a> {
         let name = self.name();
         let attr = self.seq.iter().map(|a| a.name());
         
-        let resolve_type = |a: &Attribute| -> &TypeSpec<'a> {
+        let resolve_type = |a: &Attribute| -> Type<'a> {
             let path = a.typ.split('.').collect();
             self.resolve(path)
         };
@@ -204,13 +235,13 @@ impl<'a> TypeSpec<'a> {
 
         quote!(
             impl #typ {
-                pub fn #read_fn(_input: &[u8], _parents: &#parents_ty, _root: &#root_ty, _meta: &Meta, _ctx: &Context) -> IoResult<#typ> {
+                pub fn #read_fn<'a>(_input: &'a [u8], _parents: &#parents_ty, _root: &#root_ty, _meta: &Meta, _ctx: &Context) -> IoResult<'a, #typ> {
                     let _obj = #precursor_ty::new();
-                    #( let _obj = _obj.#precursor_read(_input, _parents, _root, _meta, _ctx)?; )*
+                    #( let (_input, _obj) = _obj.#precursor_read(_input, _parents, _root, _meta, _ctx)?; )*
 
-                    Ok(#typ {
+                    Ok((_input, #typ {
                         #(#attributes1: _obj.#attributes2,)*
-                    })
+                    }))
                 }
             }
         )
@@ -246,7 +277,7 @@ impl<'a> TypeSpec<'a> {
     {
         // Create root and parent types
         let root_ty = root_precursor.clone().unwrap_or_else(|| quote!( () ));
-        let new_root = root_precursor.clone().unwrap_or_else(|| quote!{ &self });
+        let new_root = if root_precursor.is_some() { quote!{ _root } } else { quote!{ &self } };
 
         let parents_ty = parent_precursors.iter();
         let parents_ty = quote! { (#(& #parents_ty, )*) };
@@ -265,16 +296,12 @@ impl<'a> TypeSpec<'a> {
             let mut new_parent_precursors = parent_precursors.clone();
             new_parent_precursors.insert(0, prev_name.clone());
 
+            // Prepare read() calls and their _parents/_root-dependent implementation
             let attr_name = attr.name();
-            let (attr_read_call, attr_read_impl) = match &attr.typ[..] {
-                "u8" => (quote!(), quote!{ nom::be_u8(_input) }),
-                path => {
-                    let attr_typ = self.resolve(path.split('.').collect());
-                    let attr_read_call = attr.read_final_struct_call(attr_typ, new_parent_precursors.clone(), new_root_precursor.clone());
-                    let attr_read_impl = attr_typ.impl_final_read(new_parent_precursors, Some(new_root_precursor));
-                    (attr_read_call, attr_read_impl)
-                }
-            };
+            let attr_typ = self.resolve(attr.typ.split('.').collect());
+            let attr_read_call = attr.read_final_struct_call(attr_typ.clone(), new_parent_precursors.clone(), new_root_precursor.clone());
+            let attr_impl_final = attr_typ.impl_final_read(new_parent_precursors.clone(), Some(new_root_precursor.clone()));
+            let attr_impl_precursors = attr_typ.impl_precursor_reads(new_parent_precursors, Some(new_root_precursor));
 
             let read_fn = Self::build_function_name("read", parent_precursors.clone(), root_precursor.clone());
 
@@ -283,19 +310,21 @@ impl<'a> TypeSpec<'a> {
             let attributes3 = previous_attributes.iter();
 
             reads.push(quote!(
-                #attr_read_impl
+                #attr_impl_final
+                #(#attr_impl_precursors)*
 
                 impl #prev_name {
-                    pub fn #read_fn(self, _input: &[u8], _parents: &#parents_ty, _root: &#root_ty, _meta: &Meta, _ctx: &Context) -> IoResult<#next_name> {
+                    #[inline]
+                    pub fn #read_fn<'a>(self, _input: &'a [u8], _parents: &#parents_ty, _root: &#root_ty, _meta: &Meta, _ctx: &Context) -> IoResult<'a, #next_name> {
                         let _new_root = #new_root;
                         let _new_parents = _parents.prepend(&self);
                         #(let #attributes1 = self.#attributes2;)*
-                        let #attr_name = #attr_read_call?;
+                        let (_input, #attr_name) = #attr_read_call?;
                         
-                        Ok(#next_name {
+                        Ok((_input, #next_name {
                             #(#attributes3, )*
                             #attr_name
-                        })
+                        }))
                     }
                 }
             ));
