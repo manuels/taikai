@@ -37,8 +37,8 @@ impl Type {
     }
 
     pub fn impl_final_read(&self,
-        parent_precursors: Vec<TokenStream>,
-        root_precursor: Option<TokenStream>) -> TokenStream
+        parent_precursors: &[TokenStream],
+        root_precursor: &Option<TokenStream>) -> TokenStream
     {
         match self {
             Type::Primitive(_) => quote!(),
@@ -47,8 +47,8 @@ impl Type {
     }
 
     pub fn impl_precursor_reads(&self,
-        parent_precursors: Vec<TokenStream>,
-        root_precursor: Option<TokenStream>,
+        parent_precursors: &[TokenStream],
+        root_precursor: &Option<TokenStream>,
         meta: &Meta) -> Vec<TokenStream>
     {
         match self {
@@ -57,7 +57,7 @@ impl Type {
         }
     }
 
-    pub fn as_primitive(mut name: &str) -> Option<Type> {
+    pub fn to_primitive(mut name: &str) -> Option<Type> {
         if name.ends_with("le") || name.ends_with("be") {
             name = &name[..name.len() - 2];
         }
@@ -104,7 +104,7 @@ impl TypeSpec {
             root: None,
             scope,
             id,
-            types: types,
+            types,
             seq: vec![],
         };
 
@@ -119,7 +119,7 @@ impl TypeSpec {
 
         for (_id, subtype) in typ.borrow().types.iter() {
             let mut subtype = subtype.borrow_mut();
-            subtype.root.replace(typ.borrow().root.clone().unwrap_or(Rc::clone(&typ)));
+            subtype.root.replace(typ.borrow().root.clone().unwrap_or_else(|| Rc::clone(&typ)));
             subtype.supa.replace(Rc::clone(&typ));
 
             subtype.scope = typ.borrow().scope.clone();
@@ -142,7 +142,7 @@ impl TypeSpec {
         let first = path.remove(0);
 
         if path.is_empty() {
-            if let Some(typ) = Type::as_primitive(first) {
+            if let Some(typ) = Type::to_primitive(first) {
                 return typ;
             }
         }
@@ -169,15 +169,14 @@ impl TypeSpec {
         for el in path {
             typ = {
                 let this = typ.as_ref().borrow();
-                let new_typ = match this.types.get(el) {
+                match this.types.get(el) {
                     None => panic!("Could not resolve type '{}' in '{}' (at {})!", orig_path.join("."), self.name(), el),
                     Some(t) => Rc::clone(t),
-                };
-                new_typ
+                }
             };
         }
 
-        return Type::Custom(typ);
+        Type::Custom(typ)
     }
 
     pub fn absolute_final_path(&self) -> TokenStream {
@@ -278,7 +277,7 @@ impl TypeSpec {
     }
 
     pub fn build_function_name(func: &str,
-        parent_precursors: Vec<TokenStream>,
+        parent_precursors: &[TokenStream],
         root_precursor: Option<TokenStream>) -> TokenStream
     {
         let tokenstream2str = |t: &TokenStream| t.to_string().replace(" :: ", "__");
@@ -293,11 +292,11 @@ impl TypeSpec {
 
 
     pub fn impl_final_read(&self,
-        parent_precursors: Vec<TokenStream>,
-        root_precursor: Option<TokenStream>) -> TokenStream
+        parent_precursors: &[TokenStream],
+        root_precursor: &Option<TokenStream>) -> TokenStream
     {
         let typ = self.absolute_final_path();
-        let read_fn = Self::build_function_name("read", parent_precursors.clone(), root_precursor.clone());
+        let read_fn = Self::build_function_name("read", &parent_precursors, root_precursor.clone());
 
         let root_ty = root_precursor.clone().unwrap_or_else(|| quote!( () ));
 
@@ -325,7 +324,7 @@ impl TypeSpec {
     }
 
 
-    pub fn define(types: Vec<Rc<RefCell<TypeSpec>>>) -> TokenStream
+    pub fn define(types: &[Rc<RefCell<TypeSpec>>]) -> TokenStream
     {
         let final_struct = types.iter().map(|t| t.borrow().final_struct());
         let precursor_structs = types.iter().map(|t| t.borrow().precursor_structs()).flatten();
@@ -339,7 +338,7 @@ impl TypeSpec {
         let subtypes = if subtypes.is_empty() {
             quote!()
         } else {
-            Self::define(subtypes)
+            Self::define(&subtypes)
         };
 
         quote!(
@@ -363,8 +362,8 @@ impl TypeSpec {
 
 
     pub fn impl_precursor_reads(&self,
-        parent_precursors: Vec<TokenStream>,
-        root_precursor: Option<TokenStream>,
+        parent_precursors: &[TokenStream],
+        root_precursor: &Option<TokenStream>,
         meta: &Meta) -> Vec<TokenStream>
     {
         // Create root and parent types
@@ -384,18 +383,19 @@ impl TypeSpec {
 
         for (attr, (prev_name, next_name)) in self.seq.iter().zip(precursors1.zip(precursors2)) {
             // Create new root and parent types for subtypes
-            let new_root_precursor = root_precursor.clone().unwrap_or(prev_name.clone());
-            let mut new_parent_precursors = parent_precursors.clone();
+            let new_root_precursor = root_precursor.clone().unwrap_or_else(|| prev_name.clone());
+            let some_new_root_precursor = Some(new_root_precursor.clone());
+            let mut new_parent_precursors = parent_precursors.to_vec();
             new_parent_precursors.insert(0, prev_name.clone());
 
             // Prepare read() calls and their _parents/_root-dependent implementation
             let attr_name = attr.name();
             let attr_typ = self.resolve(attr.typ.split('.').collect());
-            let attr_read_call = attr.read_final_struct_call(attr_typ.clone(), new_parent_precursors.clone(), new_root_precursor.clone(), meta);
-            let attr_impl_final = attr_typ.impl_final_read(new_parent_precursors.clone(), Some(new_root_precursor.clone()));
-            let attr_impl_precursors = attr_typ.impl_precursor_reads(new_parent_precursors, Some(new_root_precursor), meta);
+            let attr_read_call = attr.read_final_struct_call(attr_typ.clone(), &new_parent_precursors, new_root_precursor, meta);
+            let attr_impl_final = attr_typ.impl_final_read(&new_parent_precursors, &some_new_root_precursor);
+            let attr_impl_precursors = attr_typ.impl_precursor_reads(&new_parent_precursors, &some_new_root_precursor, meta);
 
-            let read_fn = Self::build_function_name("read", parent_precursors.clone(), root_precursor.clone());
+            let read_fn = Self::build_function_name("read", &parent_precursors, root_precursor.clone());
 
             let attributes1 = previous_attributes.iter();
             let attributes2 = previous_attributes.iter();

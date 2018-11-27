@@ -44,12 +44,12 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         subtypes,
         seq);
 
-    let definition = TypeSpec::define(vec![Rc::clone(&typ)]);
+    let definition = TypeSpec::define(&[Rc::clone(&typ)]);
 
     let typ = typ.borrow();
     let root = typ.absolute_final_path();
-    let precursor_impls = typ.impl_precursor_reads(vec![], None, &meta);
-    let final_impl = typ.impl_final_read(vec![], None);
+    let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
+    let final_impl = typ.impl_final_read(&[], &None);
     
     let code = quote!(
         #runtime
@@ -118,12 +118,12 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         "root".into(),
         subtypes,
         seq);
-    let definition = TypeSpec::define(vec![Rc::clone(&typ)]);
+    let definition = TypeSpec::define(&[Rc::clone(&typ)]);
 
     let typ = typ.borrow();
     let root = typ.absolute_final_path();
-    let precursor_impls = typ.impl_precursor_reads(vec![], None, &meta);
-    let final_impl = typ.impl_final_read(vec![], None);
+    let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
+    let final_impl = typ.impl_final_read(&[], &None);
     
     let code = quote!(
         #runtime

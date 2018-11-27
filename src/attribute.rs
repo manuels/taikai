@@ -5,7 +5,7 @@ use crate::type_spec::Type;
 use crate::type_spec::Meta;
 use crate::type_spec::Endian;
 
-pub const PRIMITIVES: &'static [&'static str] = &[
+pub const PRIMITIVES: &[&str] = &[
     "u8",
     "u16",
     "u32",
@@ -32,7 +32,7 @@ impl Attribute {
 
     pub fn read_final_struct_call(&self,
         typ: Type,
-        parent_precursors: Vec<TokenStream>,
+        parent_precursors: &[TokenStream],
         root_precursor: TokenStream,
         meta: &Meta) -> TokenStream
     {
@@ -68,7 +68,7 @@ impl Attribute {
             Type::Custom(typ) => {
                 // user-defined struct (e.g. super.header)
                 let typ = typ.as_ref().borrow().absolute_final_path();
-                let read_fn = TypeSpec::build_function_name("read", parent_precursors, Some(root_precursor));
+                let read_fn = TypeSpec::build_function_name("read", &parent_precursors, Some(root_precursor));
 
                 quote!(
                     #typ :: #read_fn (_input, &_new_parents, _new_root, _meta, _ctx)
