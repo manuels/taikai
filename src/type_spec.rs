@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use heck::CamelCase;
 use proc_macro2::TokenStream;
@@ -7,65 +9,83 @@ use crate::attribute::Attribute;
 // TODO: use MarkedTokenStream instead of TokenStream
 
 #[derive(Clone)]
-pub enum Type<'a> {
+pub enum Type {
     Primitive(TokenStream),
-    Custom(&'a TypeSpec<'a>),
+    Custom(Rc<RefCell<TypeSpec>>),
 }
 
-impl<'a> Type<'a> {
-    pub fn absolute_final_path(&'a self) -> TokenStream {
+impl Type {
+    pub fn absolute_final_path(&self) -> TokenStream {
         match self {
             Type::Primitive(p) => p.clone(),
-            Type::Custom(s) => s.absolute_final_path(),
+            Type::Custom(s) => s.as_ref().borrow().absolute_final_path(),
         }
     }
 
-    pub fn impl_final_read(&'a self,
+    pub fn impl_final_read(&self,
         parent_precursors: Vec<TokenStream>,
         root_precursor: Option<TokenStream>) -> TokenStream
     {
         match self {
             Type::Primitive(_) => quote!(),
-            Type::Custom(s) => s.impl_final_read(parent_precursors, root_precursor),
+            Type::Custom(s) => s.as_ref().borrow().impl_final_read(parent_precursors, root_precursor),
         }
     }
 
-    pub fn impl_precursor_reads(&'a self,
+    pub fn impl_precursor_reads(&self,
         parent_precursors: Vec<TokenStream>,
         root_precursor: Option<TokenStream>) -> Vec<TokenStream>
     {
         match self {
             Type::Primitive(_) => vec![],
-            Type::Custom(s) => s.impl_precursor_reads(parent_precursors, root_precursor),
+            Type::Custom(s) => s.as_ref().borrow().impl_precursor_reads(parent_precursors, root_precursor),
+        }
+    }
+
+    pub fn as_primitive(name: &str) -> Option<Type> {
+        match name {
+            "u8"   => Some(Type::Primitive(quote!(u8))),
+            "u16"  => Some(Type::Primitive(quote!(u16))),
+            "u32"  => Some(Type::Primitive(quote!(u32))),
+            "u64"  => Some(Type::Primitive(quote!(u64))),
+            "u128" => Some(Type::Primitive(quote!(u128))),
+            "i8"   => Some(Type::Primitive(quote!(i8))),
+            "i16"  => Some(Type::Primitive(quote!(i16))),
+            "i32"  => Some(Type::Primitive(quote!(i32))),
+            "i64"  => Some(Type::Primitive(quote!(i64))),
+            "i128" => Some(Type::Primitive(quote!(i128))),
+            "f32"  => Some(Type::Primitive(quote!(f32))),
+            "f64"  => Some(Type::Primitive(quote!(f64))),
+            _ => None
         }
     }
 }
 
-pub struct TypeSpec<'a> {
-    supa: Option<&'a TypeSpec<'a>>,
-    root: Option<&'a TypeSpec<'a>>,
+pub struct TypeSpec {
+    supa: Option<Rc<RefCell<TypeSpec>>>,
+    root: Option<Rc<RefCell<TypeSpec>>>,
 
     scope: Vec<TokenStream>,
 
     id: String,
-    types: HashMap<String, TypeSpec<'a>>,
+    types: HashMap<String, Rc<RefCell<TypeSpec>>>,
     seq: Vec<Attribute>,
 }
 
-impl<'a> TypeSpec<'a> {
+impl TypeSpec {
     //#[cfg(test)]
     pub fn new(scope: Vec<TokenStream>,
         id: String,
-        types: HashMap<String, TypeSpec<'a>>,
+        types: HashMap<String, Rc<RefCell<TypeSpec>>>,
         seq: Vec<(&str, &str)>,
-        ) -> Self
+        ) -> Rc<RefCell<Self>>
     {
         let mut typ = TypeSpec {
             supa: None,
             root: None,
             scope,
             id,
-            types,
+            types: types,
             seq: vec![],
         };
 
@@ -76,31 +96,69 @@ impl<'a> TypeSpec<'a> {
             typ.seq.push(attr);
         }
 
+        let typ = Rc::new(RefCell::new(typ));
+
+        for (_id, subtype) in typ.borrow().types.iter() {
+            let mut subtype = subtype.borrow_mut();
+            subtype.root.replace(typ.borrow().root.clone().unwrap_or(Rc::clone(&typ)));
+            subtype.supa.replace(Rc::clone(&typ));
+
+            subtype.scope = typ.borrow().scope.clone();
+            subtype.scope.push(quote!(__subtypes));
+        }
+
         typ
     }
 }
 
 
-impl<'a> TypeSpec<'a> {
-    pub fn resolve(&'a self, mut path: Vec<&str>) -> Type<'a> {
-        if path.is_empty() {
-            return Type::Custom(self);
-        }
-
-        if path == vec!["u8"] {
-            return Type::Primitive(quote!(u8));
-        }
-
+impl TypeSpec {
+    pub fn resolve(&self, mut path: Vec<&str>) -> Type {
         let orig_path = path.clone();
-        match path.remove(0) {
-            "super" => Type::Custom(self.supa.unwrap_or_else(|| unreachable!())),
-            "root" => Type::Custom(self.root.unwrap_or(self)),
-            n => {
-                let typ = self.types.get(n);
-                let typ = typ.unwrap_or_else(|| panic!("Could not resolve type '{}'!", orig_path.join("::")));
-                typ.resolve(path)
+
+        if path.is_empty() {
+            panic!("Could not resolve type in '{}': type is an empty string!", self.name());
+        }
+
+        let first = path.remove(0);
+
+        if path.is_empty() {
+            if let Some(typ) = Type::as_primitive(first) {
+                return typ;
             }
         }
+
+        if first == "root" {
+            if let Some(root) = &self.root {
+                return root.as_ref().borrow().resolve(path);
+            } else {
+                return self.resolve(path);
+            }
+        } else if first == "super" {
+            if let Some(supa) = &self.supa {
+                return supa.as_ref().borrow().resolve(path);
+            } else {
+                panic!("Could not resolve type '{}' in '{}': super does not exist!", orig_path.join("."), self.name());
+            }
+        }
+
+        let typ = self.types.get(first);
+        let typ = typ.unwrap_or_else(|| panic!("Could not resolve type '{}' in '{}'!", orig_path.join("."), self.name()));
+
+        let mut typ = Rc::clone(typ);
+
+        for el in path {
+            typ = {
+                let this = typ.as_ref().borrow();
+                let new_typ = match this.types.get(el) {
+                    None => panic!("Could not resolve type '{}' in '{}' (at {})!", orig_path.join("."), self.name(), el),
+                    Some(t) => Rc::clone(t),
+                };
+                new_typ
+            };
+        }
+
+        return Type::Custom(typ);
     }
 
     pub fn absolute_final_path(&self) -> TokenStream {
@@ -131,27 +189,27 @@ impl<'a> TypeSpec<'a> {
     }
 }
 
-impl<'a> TypeSpec<'a> {
-    pub fn name(&'a self) -> TokenStream {
+impl TypeSpec {
+    pub fn name(&self) -> TokenStream {
         syn::parse_str(&self.id.to_camel_case()).unwrap()
     }
 
-    pub fn precursor_name(&'a self, attr: &str) -> TokenStream {
+    pub fn precursor_name(&self, attr: &str) -> TokenStream {
         let name = format!("{}__{}", &self.id, attr).to_camel_case();
         syn::parse_str(&name).unwrap()
     }
 
-    pub fn first_precursor_name(&'a self) -> TokenStream {
+    pub fn first_precursor_name(&self) -> TokenStream {
         self.precursor_name("__precursor")
     }
 }
 
-impl<'a> TypeSpec<'a> {
-    pub fn final_struct(&'a self) -> TokenStream {
+impl TypeSpec {
+    pub fn final_struct(&self) -> TokenStream {
         let name = self.name();
         let attr = self.seq.iter().map(|a| a.name());
         
-        let resolve_type = |a: &Attribute| -> Type<'a> {
+        let resolve_type = |a: &Attribute| -> Type {
             let path = a.typ.split('.').collect();
             self.resolve(path)
         };
@@ -169,7 +227,7 @@ impl<'a> TypeSpec<'a> {
         structure
     }
 
-    pub fn precursor_structs(&'a self) -> Vec<TokenStream> {
+    pub fn precursor_structs(&self) -> Vec<TokenStream> {
         let name = self.first_precursor_name();
 
         let mut structs = vec![quote!(
@@ -215,7 +273,7 @@ impl<'a> TypeSpec<'a> {
     }
 
 
-    pub fn impl_final_read(&'a self,
+    pub fn impl_final_read(&self,
         parent_precursors: Vec<TokenStream>,
         root_precursor: Option<TokenStream>) -> TokenStream
     {
@@ -248,19 +306,33 @@ impl<'a> TypeSpec<'a> {
     }
 
 
-    pub fn define(&'a self) -> TokenStream
+    pub fn define(types: Vec<Rc<RefCell<TypeSpec>>>) -> TokenStream
     {
-        let final_struct = self.final_struct();
-        let precursor_structs = self.precursor_structs();
-        let subtypes = self.types.iter().map(|(_, t)| t.define());
+        let final_struct = types.iter().map(|t| t.borrow().final_struct());
+        let precursor_structs = types.iter().map(|t| t.borrow().precursor_structs()).flatten();
+        let subtypes: Vec<_> = types.iter()
+            .map(|t| {
+                let v: Vec<_> = t.borrow().types.values().map(|t| Rc::clone(t)).collect();
+                v
+            })
+            .flatten()
+            .collect();
+        let subtypes = if subtypes.is_empty() {
+            quote!()
+        } else {
+            Self::define(subtypes)
+        };
 
         quote!(
-            #[derive(PartialEq, Debug)]
-            #final_struct
+            #(
+                #[derive(PartialEq, Debug)]
+                #final_struct
+            )*
+
             pub mod __precursors {
                 #(
-                    #[derive(PartialEq, Debug)]
-                    #precursor_structs
+                        #[derive(PartialEq, Debug)]
+                        #precursor_structs
                 )*
             }
 
@@ -271,7 +343,7 @@ impl<'a> TypeSpec<'a> {
     }
 
 
-    pub fn impl_precursor_reads(&'a self,
+    pub fn impl_precursor_reads(&self,
         parent_precursors: Vec<TokenStream>,
         root_precursor: Option<TokenStream>) -> Vec<TokenStream>
     {
@@ -308,6 +380,7 @@ impl<'a> TypeSpec<'a> {
             let attributes1 = previous_attributes.iter();
             let attributes2 = previous_attributes.iter();
             let attributes3 = previous_attributes.iter();
+            let attributes4 = previous_attributes.iter();
 
             reads.push(quote!(
                 #attr_impl_final
@@ -318,11 +391,11 @@ impl<'a> TypeSpec<'a> {
                     pub fn #read_fn<'a>(self, _input: &'a [u8], _parents: &#parents_ty, _root: &#root_ty, _meta: &Meta, _ctx: &Context) -> IoResult<'a, #next_name> {
                         let _new_root = #new_root;
                         let _new_parents = _parents.prepend(&self);
-                        #(let #attributes1 = self.#attributes2;)*
+                        #(let #attributes1 = &self.#attributes2;)*
                         let (_input, #attr_name) = #attr_read_call?;
-                        
+
                         Ok((_input, #next_name {
-                            #(#attributes3, )*
+                            #(#attributes3: self.#attributes4, )*
                             #attr_name
                         }))
                     }
