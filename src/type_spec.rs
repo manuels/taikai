@@ -22,6 +22,7 @@ pub struct Meta {
     pub endian: Endian,
 }
 
+// Holds storage information only (no endianness, Attribute does that)!
 #[derive(Clone)]
 pub enum Type {
     Primitive(TokenStream),
@@ -228,7 +229,7 @@ impl TypeSpec {
         let attr = self.seq.iter().map(|a| a.name());
         
         let resolve_type = |a: &Attribute| -> Type {
-            let path = a.typ.split('.').collect();
+            let path = a.typ();
             self.resolve(path)
         };
 
@@ -260,7 +261,7 @@ impl TypeSpec {
         let mut pairs = quote!();
         for attr in self.seq.iter() {
             let key = attr.name();
-            let path = attr.typ.split('.').collect();
+            let path = attr.typ();
             let value = self.resolve(path).absolute_final_path();
             pairs = quote!( #pairs pub #key: #value, );
 
@@ -390,7 +391,7 @@ impl TypeSpec {
 
             // Prepare read() calls and their _parents/_root-dependent implementation
             let attr_name = attr.name();
-            let attr_typ = self.resolve(attr.typ.split('.').collect());
+            let attr_typ = self.resolve(attr.typ());
             let attr_read_call = attr.read_final_struct_call(attr_typ.clone(), &new_parent_precursors, new_root_precursor, meta);
             let attr_impl_final = attr_typ.impl_final_read(&new_parent_precursors, &some_new_root_precursor);
             let attr_impl_precursors = attr_typ.impl_precursor_reads(&new_parent_precursors, &some_new_root_precursor, meta);

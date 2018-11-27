@@ -30,6 +30,10 @@ impl Attribute {
         syn::parse_str(&self.id.clone()).unwrap()
     }
 
+    pub fn typ<'a>(&'a self) -> Vec<&'a str> {
+        self.typ.split('.').collect()
+    }
+
     pub fn read_final_struct_call(&self,
         typ: Type,
         parent_precursors: &[TokenStream],
