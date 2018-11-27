@@ -8,6 +8,20 @@ use crate::attribute::Attribute;
 
 // TODO: use MarkedTokenStream instead of TokenStream
 
+// Compile-time Endian
+#[derive(Debug, Clone)]
+pub enum Endian {
+    Big,
+    Little,
+    Runtime(TokenStream),
+}
+
+// Compile-time Meta
+#[derive(Debug, Clone)]
+pub struct Meta {
+    pub endian: Endian,
+}
+
 #[derive(Clone)]
 pub enum Type {
     Primitive(TokenStream),
@@ -34,15 +48,20 @@ impl Type {
 
     pub fn impl_precursor_reads(&self,
         parent_precursors: Vec<TokenStream>,
-        root_precursor: Option<TokenStream>) -> Vec<TokenStream>
+        root_precursor: Option<TokenStream>,
+        meta: &Meta) -> Vec<TokenStream>
     {
         match self {
             Type::Primitive(_) => vec![],
-            Type::Custom(s) => s.as_ref().borrow().impl_precursor_reads(parent_precursors, root_precursor),
+            Type::Custom(s) => s.as_ref().borrow().impl_precursor_reads(parent_precursors, root_precursor, meta),
         }
     }
 
-    pub fn as_primitive(name: &str) -> Option<Type> {
+    pub fn as_primitive(mut name: &str) -> Option<Type> {
+        if name.ends_with("le") || name.ends_with("be") {
+            name = &name[..name.len() - 2];
+        }
+
         match name {
             "u8"   => Some(Type::Primitive(quote!(u8))),
             "u16"  => Some(Type::Primitive(quote!(u16))),
@@ -345,7 +364,8 @@ impl TypeSpec {
 
     pub fn impl_precursor_reads(&self,
         parent_precursors: Vec<TokenStream>,
-        root_precursor: Option<TokenStream>) -> Vec<TokenStream>
+        root_precursor: Option<TokenStream>,
+        meta: &Meta) -> Vec<TokenStream>
     {
         // Create root and parent types
         let root_ty = root_precursor.clone().unwrap_or_else(|| quote!( () ));
@@ -371,9 +391,9 @@ impl TypeSpec {
             // Prepare read() calls and their _parents/_root-dependent implementation
             let attr_name = attr.name();
             let attr_typ = self.resolve(attr.typ.split('.').collect());
-            let attr_read_call = attr.read_final_struct_call(attr_typ.clone(), new_parent_precursors.clone(), new_root_precursor.clone());
+            let attr_read_call = attr.read_final_struct_call(attr_typ.clone(), new_parent_precursors.clone(), new_root_precursor.clone(), meta);
             let attr_impl_final = attr_typ.impl_final_read(new_parent_precursors.clone(), Some(new_root_precursor.clone()));
-            let attr_impl_precursors = attr_typ.impl_precursor_reads(new_parent_precursors, Some(new_root_precursor));
+            let attr_impl_precursors = attr_typ.impl_precursor_reads(new_parent_precursors, Some(new_root_precursor), meta);
 
             let read_fn = Self::build_function_name("read", parent_precursors.clone(), root_precursor.clone());
 

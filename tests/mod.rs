@@ -8,7 +8,9 @@ mod test_simple {
 
     #[test]
     fn test_simple() {
-        let meta = Meta {};
+        let meta = Meta {
+            endian: Endian::Big,
+        };
         let ctx = Context {};
         let (rest, obj) = Foo::read(&[0x01, 0xab, 0x99], &meta, &ctx).unwrap();
         assert_eq!(obj, Foo {
@@ -25,7 +27,9 @@ mod test_resolve {
 
     #[test]
     fn test_resolve() {
-        let meta = Meta {};
+        let meta = Meta {
+            endian: Endian::Big,
+        };
         let ctx = Context {};
         let (rest, obj) = Root::read(&[0x01, 0x02, 0x03], &meta, &ctx).unwrap();
         assert_eq!(obj, Root {

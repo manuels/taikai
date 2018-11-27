@@ -1,5 +1,6 @@
 #![recursion_limit = "1024"]
 #![allow(dead_code)]
+#![feature(bind_by_move_pattern_guards)]
 //#![feature(trace_macros)] trace_macros!(true);
 
 #[macro_use]
@@ -15,6 +16,8 @@ mod attribute;
 use std::rc::Rc;
 
 use crate::type_spec::TypeSpec;
+use crate::type_spec::Meta;
+use crate::type_spec::Endian;
 
 #[proc_macro]
 pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -23,6 +26,10 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     use proc_macro2::TokenStream;
     let runtime: TokenStream = syn::parse_str(include_str!("runtime.rs")).unwrap();
 
+    let meta = Meta {
+        endian: Endian::Big,
+    };
+
     let subtyp = TypeSpec::new(vec![quote!(crate), quote!(test_simple), quote!(__subtypes)],
         "bar".into(),
         HashMap::new(),
@@ -30,7 +37,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut subtypes = HashMap::new();
     subtypes.insert("bar".into(), subtyp);
 
-    let seq = vec![("i", "u8"), ("baz", "bar"), ("j", "u8")];
+    let seq = vec![("i", "u8be"), ("baz", "bar"), ("j", "u8")];
 
     let typ = TypeSpec::new(vec![quote!(crate), quote!(test_simple)],
         "foo".into(),
@@ -41,7 +48,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let typ = typ.borrow();
     let root = typ.absolute_final_path();
-    let precursor_impls = typ.impl_precursor_reads(vec![], None);
+    let precursor_impls = typ.impl_precursor_reads(vec![], None, &meta);
     let final_impl = typ.impl_final_read(vec![], None);
     
     let code = quote!(
@@ -71,6 +78,10 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
     use proc_macro2::TokenStream;
     let runtime: TokenStream = syn::parse_str(include_str!("runtime.rs")).unwrap();
+
+    let meta = Meta {
+        endian: Endian::Big,
+    };
 
     let mut subtypes = HashMap::new();
     {
@@ -111,7 +122,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
     let typ = typ.borrow();
     let root = typ.absolute_final_path();
-    let precursor_impls = typ.impl_precursor_reads(vec![], None);
+    let precursor_impls = typ.impl_precursor_reads(vec![], None, &meta);
     let final_impl = typ.impl_final_read(vec![], None);
     
     let code = quote!(
