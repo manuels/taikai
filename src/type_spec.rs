@@ -97,24 +97,17 @@ impl TypeSpec {
     pub fn new(scope: Vec<TokenStream>,
         id: String,
         types: HashMap<String, Rc<RefCell<TypeSpec>>>,
-        seq: Vec<(&str, &str)>,
+        seq: Vec<Attribute>,
         ) -> Rc<RefCell<Self>>
     {
-        let mut typ = TypeSpec {
+        let typ = TypeSpec {
             supa: None,
             root: None,
             scope,
             id,
             types,
-            seq: vec![],
+            seq,
         };
-
-        for (id, attr_typ) in seq {
-            let attr = Attribute {
-                id: id.to_string(), typ: attr_typ.to_string(),
-            };
-            typ.seq.push(attr);
-        }
 
         let typ = Rc::new(RefCell::new(typ));
 
@@ -228,14 +221,12 @@ impl TypeSpec {
         let name = self.name();
         let attr = self.seq.iter().map(|a| a.name());
         
-        let resolve_type = |a: &Attribute| -> Type {
-            let path = a.typ();
-            self.resolve(path)
+        let resolve_type = |a: &Attribute| -> TokenStream {
+            a.absolute_path_of_compound_type(self)
         };
 
         let attr_type = self.seq.iter()
-            .map(resolve_type)
-            .map(|t| t.absolute_final_path());
+            .map(resolve_type);
 
         let structure = quote!(
             pub struct #name {
@@ -261,8 +252,7 @@ impl TypeSpec {
         let mut pairs = quote!();
         for attr in self.seq.iter() {
             let key = attr.name();
-            let path = attr.typ();
-            let value = self.resolve(path).absolute_final_path();
+            let value = attr.absolute_path_of_compound_type(&self);
             pairs = quote!( #pairs pub #key: #value, );
 
             let name = self.precursor_name(&attr.id);
@@ -391,8 +381,8 @@ impl TypeSpec {
 
             // Prepare read() calls and their _parents/_root-dependent implementation
             let attr_name = attr.name();
-            let attr_typ = self.resolve(attr.typ());
-            let attr_read_call = attr.read_final_struct_call(attr_typ.clone(), &new_parent_precursors, new_root_precursor, meta);
+            let attr_typ = attr.resolve_scalar_type(self);
+            let attr_read_call = attr.read_call(attr_typ.clone(), &new_parent_precursors, new_root_precursor, meta);
             let attr_impl_final = attr_typ.impl_final_read(&new_parent_precursors, &some_new_root_precursor);
             let attr_impl_precursors = attr_typ.impl_precursor_reads(&new_parent_precursors, &some_new_root_precursor, meta);
 
