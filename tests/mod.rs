@@ -64,6 +64,8 @@ mod test_compound {
             0x03, 0x04,
             0x05, 0x06, 0x07,
             0x08,
+            0x61, 0x62, 0x63, // abc
+            0x61, 0x62, 0x63, // abc
         ];
         let (rest, obj) = Root::read(&data, &meta, &ctx).unwrap();
         assert_eq!(obj, Root {
@@ -74,6 +76,7 @@ mod test_compound {
             }),
             k: None,
             l: Some(0x08),
+            bytes: Some(vec![(),()])
         });
         assert_eq!(rest.len(), 0);
     }

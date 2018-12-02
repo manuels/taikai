@@ -40,17 +40,23 @@ pub struct Attribute {
     pub typ: String,
     pub repeat: Repeat,
     pub cond: Option<TokenStream>,
+    pub contents: Vec<u8>
 }
 
 impl Attribute {
-    pub fn new<T: Into<String>, U: Into<String>>
-        (id: T, typ: U, repeat: Repeat, cond: Option<TokenStream>) -> Self
+    pub fn new<T: Into<String>, U: Into<String>>(
+        id: T,
+        typ: U,
+        repeat: Repeat,
+        cond: Option<TokenStream>,
+        contents: Vec<u8>) -> Self
     {
         Self {
             id: id.into(),
             typ: typ.into(),
             repeat,
             cond,
+            contents,
         }
     }
 
@@ -64,8 +70,12 @@ impl Attribute {
     }
 
     pub fn absolute_path_of_compound_type(&self, structure: &TypeSpec) -> TokenStream {
-        let scalar = self.resolve_scalar_type(&structure);
-        let scalar = scalar.absolute_final_path();
+        let scalar = if self.contents.is_empty() {
+            let scalar = self.resolve_scalar_type(&structure);
+            scalar.absolute_final_path()
+        } else {
+            quote!{ () }
+        };
 
         let compound = match self.repeat {
             Repeat::NoRepeat => scalar,
@@ -124,6 +134,14 @@ impl Attribute {
                 )
             }
             _ => unimplemented!("Attribute::read_call(): type '{}' unknown", self.typ),
+        };
+
+        let read_scalar = if self.contents.is_empty() {
+            read_scalar
+        } else {
+            let contents: TokenStream;
+            contents = syn::parse_str(&format!("&{:?}", self.contents)[..]).unwrap();
+            quote!( do_parse!(tag!(#contents) >> (())) )
         };
 
         let read_compound = match &self.repeat {
