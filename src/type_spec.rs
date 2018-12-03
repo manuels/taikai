@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use heck::CamelCase;
 use proc_macro2::TokenStream;
 use crate::attribute::Attribute;
+use crate::attribute::Instance;
 
 // TODO: use MarkedTokenStream instead of TokenStream
 
@@ -90,6 +91,7 @@ pub struct TypeSpec {
     id: String,
     types: HashMap<String, Rc<RefCell<TypeSpec>>>,
     seq: Vec<Attribute>,
+    instances: HashMap<String, Instance>,
 }
 
 impl TypeSpec {
@@ -98,6 +100,7 @@ impl TypeSpec {
         id: String,
         types: HashMap<String, Rc<RefCell<TypeSpec>>>,
         seq: Vec<Attribute>,
+        instances: HashMap<String, Instance>,
         ) -> Rc<RefCell<Self>>
     {
         let typ = TypeSpec {
@@ -107,6 +110,7 @@ impl TypeSpec {
             id,
             types,
             seq,
+            instances,
         };
 
         let typ = Rc::new(RefCell::new(typ));

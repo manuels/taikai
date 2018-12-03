@@ -12,6 +12,9 @@ quote = "*"
 proc-macro2 = "*"
 syn = "*"
 heck = "*"
+serde = "*"
+serde_yaml = "*"
+serde_derive = "*"
 
 [dev-dependencies]
 nom = "*"

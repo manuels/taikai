@@ -81,3 +81,62 @@ mod test_compound {
         assert_eq!(rest.len(), 0);
     }
 }
+
+mod test_macro {
+    taikai_from_str!("
+meta:
+  endian: be
+  id: top_level
+seq:
+  - id: foo
+    type: header
+    # resolves to /top_level/header ──┐
+  - id: bar     #                     │
+    type: body1 #                     │
+  - id: baz     #                     │
+    type: body2 #                     │
+types:          #                     │
+  header: #     <─────────────────────┘ <─┐
+    seq:             #                    |
+      - id: i        #                    |
+        type: u8     #                    |
+  body1:             #                    │
+    seq:             #                    │
+      - id: foo      #                    │
+        type: super.header #              │
+        # resolves to /top_level/header ──┘
+      - id: bar      #                    │
+        type: root.header  #              │
+        # resolves to /top_level/header ──┘
+  body2:
+    seq:
+      - id: foo
+        type: header
+        # resolves to /top_level/second_level/header ──┐
+    types: #                                           │
+      header: #     <──────────────────────────────────┘
+        seq:
+          - id: j
+            type: u8
+");
+
+    #[test]
+    fn test_macro() {
+        let meta = Meta {
+            endian: Endian::Big,
+        };
+        let ctx = Context {};
+        let (rest, obj) = TopLevel::read(&[0x01, 0x02, 0x03, 0x04], &meta, &ctx).unwrap();
+        assert_eq!(obj, TopLevel {
+            foo: __subtypes::Header {i: 0x01},
+            bar: __subtypes::Body1 {
+                foo: __subtypes::Header {i: 0x02},
+                bar: __subtypes::Header {i: 0x03},
+            },
+            baz: __subtypes::Body2 {
+                foo: __subtypes::__subtypes::Header {j: 0x04}
+            },
+        });
+        assert_eq!(rest.len(), 0);
+    }
+}

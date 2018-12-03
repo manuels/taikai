@@ -152,8 +152,6 @@ impl Attribute {
             Repeat::Expr(expr) => quote!( count!(#read_scalar, #expr) ),
         };
 
-        // TODO: handle _input for macros and structs!
-
         let read = if let Some(cond) = &self.cond {
             quote!( cond!(#cond, #read_compound) )
         } else {
@@ -161,7 +159,42 @@ impl Attribute {
         };
 
         quote!{
-            do_parse!(_input, _v: #read >> (_v))
+            do_parse!(_input, __v: #read >> (__v))
+        }
+    }
+}
+
+pub struct Instance {
+    attr: Attribute,
+    pos: usize,
+    value: Option<TokenStream>,
+}
+
+impl Instance {
+    pub fn new<T: Into<String>, U: Into<String>>(
+        id: T,
+        pos: usize,
+        value: Option<TokenStream>,
+        typ: U,
+        repeat: Repeat,
+        cond: Option<TokenStream>,
+        contents: Vec<u8>) -> Self
+    {
+        Self {
+            pos,
+            value,
+            attr: Attribute::new(id, typ, repeat, cond, contents),
+        }
+    }
+
+    pub fn from_attr(attr: Attribute,
+        pos: usize,
+        value: Option<TokenStream>) -> Self
+    {
+        Self {
+            pos,
+            value,
+            attr,
         }
     }
 }
