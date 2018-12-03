@@ -1,24 +1,23 @@
 #![feature(proc_macro_hygiene)]
 #![feature(try_blocks)]
+#![feature(stmt_expr_attributes)]
 
-#[macro_use]
-extern crate taikai;
+#[macro_use] extern crate taikai;
 
-#[macro_use]
-extern crate nom;
+#[macro_use] extern crate nom;
 extern crate byteorder;
 extern crate tuple_utils;
 
+#[macro_use] extern crate log;
+
+/*
 mod test_simple {
     test_simple!();
 
     #[test]
     fn test_simple() {
-        let meta = Meta {
-            endian: Endian::Big,
-        };
         let ctx = Context {};
-        let (rest, obj) = Root::read(&[0x01, 0xab, 0x99], &meta, &ctx).unwrap();
+        let (rest, obj) = Root::read(&[0x01, 0xab, 0x99], &ctx).unwrap();
         assert_eq!(obj, Root {
             i: 0x01,
             baz: __subtypes::Bar {i: 0xab},
@@ -33,11 +32,8 @@ mod test_resolve {
 
     #[test]
     fn test_resolve() {
-        let meta = Meta {
-            endian: Endian::Big,
-        };
         let ctx = Context {};
-        let (rest, obj) = Root::read(&[0x01, 0x02, 0x03], &meta, &ctx).unwrap();
+        let (rest, obj) = Root::read(&[0x01, 0x02, 0x03], &ctx).unwrap();
         assert_eq!(obj, Root {
             foo: __subtypes::Header {i: 0x01},
             bar: __subtypes::Body1 {
@@ -56,10 +52,6 @@ mod test_compound {
 
     #[test]
     fn test_compound() {
-        let meta = Meta {
-            endian: Endian::Big,
-        };
-
         let ctx = Context {};
         let data = [
             0x01, 0x02,
@@ -69,7 +61,7 @@ mod test_compound {
             0x61, 0x62, 0x63, // abc
             0x61, 0x62, 0x63, // abc
         ];
-        let (rest, obj) = Root::read(&data, &meta, &ctx).unwrap();
+        let (rest, obj) = Root::read(&data, &ctx).unwrap();
         assert_eq!(obj, Root {
             i: 0x0102,
             j: 0x0403,
@@ -123,15 +115,12 @@ types:          #                     │
 ");
 
     #[test]
-    fn test_macro() {
-        let meta = Meta {
-            endian: Endian::Big,
-        };
+    fn test_cpio() {
         let ctx = Context {};
 
         let bytes = &[0x01, 0x02, 0x03, 0x04, 0x05];
 
-        let (rest, obj) = TopLevel::read(bytes, &meta, &ctx).unwrap();
+        let (rest, obj) = TopLevel::read(bytes, &ctx).unwrap();
         assert_eq!(obj, TopLevel {
             foo: __subtypes::Header {i: 0x01},
             bar: __subtypes::Body1 {
@@ -145,8 +134,12 @@ types:          #                     │
         assert_eq!(rest.len(), 0);
 
         let mut out = vec![];
-        obj.write(&mut out, &meta, &ctx).unwrap();
+        obj.write(&mut out, &ctx).unwrap();
 
         assert_eq!(&out[..], bytes);
     }
+}
+*/
+mod test_cpio {
+    taikai_from_file!("/tmp/cpio.tsy");
 }

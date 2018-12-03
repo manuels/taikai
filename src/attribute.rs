@@ -1,9 +1,10 @@
 use proc_macro2::TokenStream;
 
 use crate::type_spec::TypeSpec;
-use crate::type_spec::Type;
-use crate::type_spec::Meta;
-use crate::type_spec::Endian;
+use crate::types::Type;
+use crate::types::Meta;
+use crate::types::Endian;
+use crate::types::Encoding;
 
 pub const PRIMITIVES: &[&str] = &[
     "u8",
@@ -40,13 +41,30 @@ pub struct Attribute {
     pub typ: String,
     pub repeat: Repeat,
     pub cond: Option<TokenStream>,
-    pub contents: Vec<u8>
+    pub contents: Vec<u8>,
+    pub size: Option<SizeProperties>,
+    pub encoding: Option<Encoding>
+}
+
+#[derive(Debug)]
+pub enum Length {
+    Eos,
+    Terminator(u8),
+    Size(TokenStream),
+}
+
+#[derive(Debug)]
+pub struct SizeProperties {
+    pub length: Length,
+    pub consume: bool,
+    pub include: bool,
+    pub eos_error: bool,
 }
 
 pub struct Instance {
-    attr: Attribute,
+    pub attr: Attribute,
     pos: usize,
-    value: Option<TokenStream>,
+    pub value: Option<TokenStream>,
 }
 
 impl Attribute {
@@ -55,14 +73,18 @@ impl Attribute {
         typ: U,
         repeat: Repeat,
         cond: Option<TokenStream>,
-        contents: Vec<u8>) -> Self
+        contents: Vec<u8>,
+        encoding: Option<Encoding>,
+        size: Option<SizeProperties>) -> Self
     {
         Self {
             id: id.into(),
             typ: typ.into(),
             repeat,
             cond,
+            encoding,
             contents,
+            size,
         }
     }
 
@@ -81,6 +103,12 @@ impl Attribute {
             scalar.absolute_final_path()
         } else {
             quote!{ () }
+        };
+
+        let scalar = if self.size.is_some() {
+            quote!( std::vec::Vec<#scalar> )
+        } else {
+            scalar
         };
 
         let compound = match self.repeat {
@@ -107,7 +135,18 @@ impl Attribute {
             (self.typ.ends_with("le") || self.typ.ends_with("be"))
         };
 
+        let read_size = self.size.as_ref().map(|size| {
+            match &size.length {
+                Length::Size(len) => quote!( map!(take!(#len), |v| v.to_vec()) ),
+                Length::Terminator(chr) => quote!( map!(take_till!(|ch| ch == #chr), |v| v.to_vec()) ),
+                Length::Eos => quote!( map!(nom::rest, |v| v.to_vec()) ),
+            }
+        });
+
         let read_scalar = match typ {
+            Type::Primitive(_) if self.typ == "u8" && read_size.is_some() => {
+                read_size.unwrap()
+            }
             Type::Primitive(_) if PRIMITIVES.iter().any(primitive_with_endian) => {
                 // primitive with endian (e.g. u8be)
                 let (typ, endian) = &self.typ.split_at(self.typ.len() - 2);
@@ -129,6 +168,17 @@ impl Attribute {
                         }
                     )
                 }
+            },
+            Type::Primitive(_) if self.typ == "str" => {
+                // a 'str' or 'strz'
+                let read_size = read_size.unwrap();
+
+                let enc = match self.encoding.as_ref().unwrap_or(&meta.encoding) {
+                    Encoding::Fixed(enc) => quote!(enc),
+                    Encoding::Runtime(enc) => enc.clone(),
+                };
+
+                quote!( map!(#read_size, apply!(decode_string, #enc)) )
             },
             Type::Custom(typ) => {
                 // user-defined struct (e.g. super.header)
@@ -152,7 +202,7 @@ impl Attribute {
 
         let read_compound = match &self.repeat {
             Repeat::NoRepeat => read_scalar,
-            Repeat::Eos => quote!( many0!(#read_scalar) ),
+            Repeat::Eos => quote!( many0!(complete!(#read_scalar)) ),
             //Repeat::Until(cond) => quote!( repeat_while!(#cond, #read_scalar) ),
             Repeat::Until(_) => unimplemented!("Repeat::Until not implemented, yet"),
             Repeat::Expr(expr) => quote!( count!(#read_scalar, #expr) ),
@@ -182,6 +232,11 @@ impl Attribute {
         };
     
         let write_scalar = match typ {
+            Type::Primitive(_) if self.typ == "u8" && self.size.is_some() => {
+                quote!(
+                    _io.write_all
+                )
+            },
             Type::Primitive(_) if PRIMITIVES.iter().any(primitive_with_endian) => {
                 // primitive with endian (e.g. u8be)
                 let (styp, endian) = &self.typ.split_at(self.typ.len() - 2);
@@ -196,9 +251,9 @@ impl Attribute {
 
                 let typ: TokenStream = syn::parse_str(&styp).unwrap();
                 if styp == &"u8" {
-                    quote!( (|attr: &#typ| _io.#func(*attr)) )
+                    quote!( (#[inline] |attr: &#typ| _io.#func(*attr)) )
                 } else {
-                    quote!( (|attr: &#typ| _io.#func::<#endian>(*attr)) )
+                    quote!( (#[inline] |attr: &#typ| _io.#func::<#endian>(*attr)) )
                 }
             }
             Type::Primitive(_) if PRIMITIVES.contains(&&self.typ[..]) => {
@@ -218,7 +273,10 @@ impl Attribute {
                 };
 
                 let typ: TokenStream = syn::parse_str(&self.typ).unwrap();
-                quote!( (|attr: &#typ| #code(*attr)) )
+                quote!( (#[inline] |attr: &#typ| #code(*attr)) )
+            },
+            Type::Primitive(_) if self.typ == "str" => {
+                unimplemented!("str")
             },
             Type::Custom(_) => {
                 // user-defined struct (e.g. super.header)
@@ -226,7 +284,7 @@ impl Attribute {
                 let typ = typ.absolute_final_path();
 
                 quote!(
-                    (|attr: &#typ| -> std::io::Result<()> { attr.#write_fn(_io, &_new_parents, _new_root, _meta, _ctx) } )
+                    (#[inline] |attr: &#typ| -> std::io::Result<()> { attr.#write_fn(_io, &_new_parents, _new_root, _meta, _ctx) } )
                 )
             }
             _ => unimplemented!("Attribute::write_call(): type '{}' unknown", self.typ),
@@ -239,13 +297,13 @@ impl Attribute {
         } else {
             let contents: TokenStream;
             contents = syn::parse_str(&format!("&{:?}", self.contents)[..]).unwrap();
-            quote!( (|_attr| -> std::io::Result<()> { _io.write(&#contents) } ) )
+            quote!( (#[inline] |_attr| -> std::io::Result<()> { _io.write_all(#contents) } ) )
         };
 
         let write_compound = match &self.repeat {
-            Repeat::NoRepeat => quote!( #write_scalar(&self.#attr)? ),
+            Repeat::NoRepeat => quote!( #write_scalar(&attr)? ),
             _ => quote!(
-                for _el in self.#attr {
+                for _el in attr {
                     #write_scalar(_el)?
                 }
             ),
@@ -253,12 +311,20 @@ impl Attribute {
 
         let code = if let Some(cond) = &self.cond {
             quote!(
-                if #cond {
+                if let Some(attr) = &self.#attr {
+                    assert!(#cond);
                     #write_compound
+                } else {
+                    assert!(!(#cond));
                 }
             )
         } else {
-            write_compound
+            quote!(
+                {
+                    let attr = &self.#attr;
+                    #write_compound
+                }
+            )
         };
 
         quote!( try { #code } )
@@ -274,12 +340,14 @@ impl Instance {
         typ: U,
         repeat: Repeat,
         cond: Option<TokenStream>,
-        contents: Vec<u8>) -> Self
+        contents: Vec<u8>,
+        enc: Option<Encoding>,
+        size_props: Option<SizeProperties>) -> Self
     {
         Self {
             pos,
             value,
-            attr: Attribute::new(id, typ, repeat, cond, contents),
+            attr: Attribute::new(id, typ, repeat, cond, contents, enc, size_props),
         }
     }
 

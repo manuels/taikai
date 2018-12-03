@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 
 use crate::type_spec::TypeSpec;
-use crate::type_spec::Meta;
+use crate::types::Meta;
 
 impl TypeSpec {
     pub fn impl_final_read(&self,
@@ -65,6 +65,7 @@ impl TypeSpec {
 
             // Prepare read() calls and their _parents/_root-dependent implementation
             let attr_name = attr.name();
+            let attr_str_name = format!("{}", attr.name());
             let attr_typ = attr.resolve_scalar_type(self);
             let attr_read_call = attr.read_call(&attr_typ, &new_parent_precursors, new_root_precursor, meta);
             let attr_impl_final = attr_typ.impl_final_read(&new_parent_precursors, &some_new_root_precursor);
@@ -87,12 +88,21 @@ impl TypeSpec {
                         let _new_root = #new_root;
                         let _new_parents = _parents.prepend(&self);
                         #(let #attributes1 = &self.#attributes2;)*
-                        let (_input, #attr_name) = #attr_read_call?;
 
-                        Ok((_input, #next_name {
-                            #(#attributes3: self.#attributes4, )*
-                            #attr_name
-                        }))
+                        match #attr_read_call {
+                            Ok((_input, #attr_name)) => {
+                                debug!("{} = {:#?}", #attr_str_name, #attr_name);
+
+                                Ok((_input, #next_name {
+                                    #(#attributes3: self.#attributes4, )*
+                                    #attr_name
+                                }))
+                            }
+                            Err(err) => {
+                                warn!("Failed to read {}", #attr_str_name);
+                                Err(err)
+                            }
+                        }
                     }
                 }
             ));

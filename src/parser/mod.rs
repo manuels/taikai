@@ -4,14 +4,23 @@ use std::cell::RefCell;
 
 use proc_macro2::TokenStream;
 
-use crate::type_spec;
+use crate::types;
 use crate::type_spec::TypeSpec;
 use crate::attribute;
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "kebab-case")] 
 struct Meta {
     id: Option<String>,
     endian: Endian,
+    encoding: Option<String>,
+
+    #[serde(skip)]
+    title: (),
+    #[serde(skip)]
+    file_extension: (),
+    #[serde(skip)]
+    license: (),
 }
 
 #[derive(Deserialize, Debug)]
@@ -25,12 +34,10 @@ enum Endian {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "lowercase")] 
 enum Repeat {
-    #[serde(rename = "expr")]
     Expr,
-    #[serde(rename = "until")]
     Until,
-    #[serde(rename = "eos")]
     Eos,
 }
 
@@ -50,6 +57,7 @@ struct TypeDef {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "kebab-case")] 
 struct Attribute {
     id: Option<String>,
     #[serde(rename = "type")] 
@@ -57,13 +65,11 @@ struct Attribute {
 
     #[serde(skip)]
     doc: (),
-    #[serde(rename="doc-ref", skip)]
+    #[serde(skip)]
     doc_ref: (),
 
     repeat: Option<Repeat>,
-    #[serde(rename = "repeat-expr")] 
     repeat_expr: Option<String>,
-    #[serde(rename = "repeat-until")] 
     repeat_until: Option<String>,
     
     #[serde(rename = "if")] 
@@ -71,10 +77,18 @@ struct Attribute {
     #[serde(default)] 
     contents: Vec<u8>,
 
-    size: Option<usize>,
-    #[serde(rename = "size-eos")] 
-    size_eos: Option<bool>,
+    size: Option<String>,
+    #[serde(default)] 
+    size_eos: bool,
     process: Option<String>,
+
+    encoding: Option<String>,
+
+    terminator: Option<u8>,
+    consume: Option<bool>,
+    #[serde(default)] 
+    include: bool,
+    eos_error: Option<bool>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -85,25 +99,34 @@ struct Instance {
     attr: Attribute,
 }
 
-impl Into<type_spec::Meta> for Meta {
-    fn into(self) -> type_spec::Meta {
-        type_spec::Meta {
+impl Into<types::Meta> for Meta {
+    fn into(self) -> types::Meta {
+        let enc = self.encoding.unwrap_or_else(|| "utf-8".to_string());
+        let enc = if encoding_rs::Encoding::for_label_no_replacement(enc.as_bytes()).is_some() {
+            types::Encoding::Fixed(enc.as_bytes().to_vec())
+        } else {
+            let enc = syn::parse_str(&enc).unwrap();
+            types::Encoding::Runtime(enc)
+        };
+
+        types::Meta {
             endian: self.endian.into(),
+            encoding: enc,
         }
     }
 }
 
-impl Into<type_spec::Endian> for Endian {
-    fn into(self) -> type_spec::Endian {
+impl Into<types::Endian> for Endian {
+    fn into(self) -> types::Endian {
         match self {
-            Endian::Big => type_spec::Endian::Big,
-            Endian::Network => type_spec::Endian::Big,
-            Endian::Little => type_spec::Endian::Little,
+            Endian::Big => types::Endian::Big,
+            Endian::Network => types::Endian::Big,
+            Endian::Little => types::Endian::Little,
         }
     }
 }
 
-pub fn parse(scope: &[String], input: &str) -> (type_spec::Meta, Rc<RefCell<TypeSpec>>) {
+pub fn parse(scope: &[String], input: &str) -> (types::Meta, Rc<RefCell<TypeSpec>>) {
     let obj: Root = serde_yaml::from_str(input).unwrap();
     let id = obj.meta.id.clone().unwrap_or_else(|| "root".to_owned());
 
@@ -113,6 +136,47 @@ pub fn parse(scope: &[String], input: &str) -> (type_spec::Meta, Rc<RefCell<Type
 }
 
 fn parse_attribute(id: Option<String>, a: Attribute) -> attribute::Attribute {
+    let typ = a.typ.unwrap_or_else(|| "u8".to_owned());
+    let cond = a.cond.map(|s| syn::parse_str(&s[..]).unwrap());
+
+    let str_props = match &typ[..] {
+        "str"
+        | "strz"
+        | "u8" if a.size.is_some() || a.size_eos => {
+            let length = if &typ[..] == "strz" {
+                attribute::Length::Terminator(0)
+            } else {
+                if let Some(term) = a.terminator {
+                    attribute::Length::Terminator(term)
+                } else if let Some(size) = a.size {
+                    let size = syn::parse_str(&size[..]).unwrap();
+                    attribute::Length::Size(size)
+                } else {
+                    assert!(a.size_eos);
+                    attribute::Length::Eos
+                }
+            };
+
+            Some(attribute::SizeProperties {
+                length,
+                consume: a.consume.unwrap_or(true),
+                include: a.include,
+                eos_error: a.eos_error.unwrap_or(true),
+            })
+        },
+        _ => None
+    };
+
+    /*
+     * We do not want to deal with 'strz' later (which just defines the
+     * terminator), so we overwrite 'strz' with 'str'!
+     */
+    let typ = if typ == "strz" {
+        "str".to_string()
+    } else {
+        typ
+    };
+
     let repeat = match a.repeat {
         None => attribute::Repeat::NoRepeat,
         Some(Repeat::Eos) => attribute::Repeat::Eos,
@@ -127,11 +191,17 @@ fn parse_attribute(id: Option<String>, a: Attribute) -> attribute::Attribute {
             attribute::Repeat::Until(expr)
         },
     };
+    
+    let enc = a.encoding.map(|enc| {
+        if encoding_rs::Encoding::for_label_no_replacement(enc.as_bytes()).is_some() {
+            types::Encoding::Fixed(enc.as_bytes().to_vec())
+        } else {
+            let enc = syn::parse_str(&enc).unwrap();
+            types::Encoding::Runtime(enc)
+        }
+    });
 
-    let typ = a.typ.unwrap_or_else(|| "u8".to_owned());
-    let cond = a.cond.map(|s| syn::parse_str(&s[..]).unwrap());
-
-    attribute::Attribute::new(a.id.or(id).unwrap(), typ, repeat, cond, a.contents)
+    attribute::Attribute::new(a.id.or(id).unwrap(), typ, repeat, cond, a.contents, enc, str_props)
 }
 
 fn parse_type(id: String, scope: Vec<TokenStream>, typ: TypeDef) -> Rc<RefCell<TypeSpec>> {

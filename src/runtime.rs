@@ -3,6 +3,7 @@ type IoResult<'a, T> = nom::IResult<&'a [u8], T>;
 use nom::*;
 use tuple_utils::Prepend;
 use byteorder::WriteBytesExt;
+use encoding_rs;
 
 // Runtime Endian
 pub enum Endian {
@@ -48,3 +49,16 @@ macro_rules! repeat_while(
     );
 );
 */
+
+#[inline]
+fn decode_string<'a>(s: &'a[u8], label:&[u8]) -> nom::IResult<&'a [u8], String> {
+    let enc = encoding_rs::Encoding::for_label_no_replacement(label);
+    let res = enc.unwrap_or_else(|| panic!("Unknown encoding: {:?}", label))
+        .decode_without_bom_handling_and_without_replacement(&s);
+
+    if let Some(s) = res {
+        Ok((&[], s.to_string()))
+    } else {
+        panic!("cannot decode string")
+    }
+}

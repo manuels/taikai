@@ -3,7 +3,7 @@ use proc_macro2::TokenStream;
 use itertools::Itertools;
 
 use crate::type_spec::TypeSpec;
-use crate::type_spec::Meta;
+use crate::types::Meta;
 
 impl TypeSpec {
     pub fn impl_final_write(&self,

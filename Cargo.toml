@@ -16,8 +16,10 @@ serde = "*"
 serde_yaml = "*"
 serde_derive = "*"
 itertools = "*"
+encoding_rs = "*"
 
 [dev-dependencies]
 nom = "*"
 tuple_utils = "*"
 byteorder = "*"
+log = "*"

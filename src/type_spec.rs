@@ -3,120 +3,13 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use heck::CamelCase;
+use heck::SnakeCase;
 use proc_macro2::TokenStream;
+
+use crate::types::Type;
+
 use crate::attribute::Attribute;
 use crate::attribute::Instance;
-
-// TODO: use MarkedTokenStream instead of TokenStream
-
-// Compile-time Endian
-#[derive(Debug, Clone)]
-pub enum Endian {
-    Big,
-    Little,
-    Runtime(TokenStream),
-}
-
-// Compile-time Meta
-#[derive(Debug, Clone)]
-pub struct Meta {
-    pub endian: Endian,
-}
-
-// Holds storage information only (no endianness, Attribute does that)!
-#[derive(Clone)]
-pub enum Type {
-    Primitive(TokenStream),
-    Custom(Rc<RefCell<TypeSpec>>),
-}
-
-impl Type {
-    pub fn absolute_final_path(&self) -> TokenStream {
-        match self {
-            Type::Primitive(p) => p.clone(),
-            Type::Custom(s) => s.as_ref().borrow().absolute_final_path(),
-        }
-    }
-
-    pub fn impl_final_read(&self,
-        parent_precursors: &[TokenStream],
-        root_precursor: &Option<TokenStream>) -> TokenStream
-    {
-        match self {
-            Type::Primitive(_) => quote!(),
-            Type::Custom(s) => s.as_ref().borrow().impl_final_read(parent_precursors, root_precursor),
-        }
-    }
-
-    pub fn impl_precursor_reads(&self,
-        parent_precursors: &[TokenStream],
-        root_precursor: &Option<TokenStream>,
-        meta: &Meta) -> Vec<TokenStream>
-    {
-        match self {
-            Type::Primitive(_) => vec![],
-            Type::Custom(s) => s.as_ref().borrow().impl_precursor_reads(parent_precursors, root_precursor, meta),
-        }
-    }
-
-    pub fn impl_final_write(&self,
-        parents: &[TokenStream],
-        root: &Option<TokenStream>,
-        meta: &Meta) -> TokenStream
-    {
-        match self {
-            Type::Primitive(_) => quote!(),
-            Type::Custom(s) => s.as_ref().borrow().impl_final_write(parents, root, meta),
-        }
-    }
-
-    pub fn to_primitive(mut name: &str) -> Option<Type> {
-        if name.ends_with("le") || name.ends_with("be") {
-            name = &name[..name.len() - 2];
-        }
-
-        match name {
-            "u8"   => Some(Type::Primitive(quote!(u8))),
-            "u16"  => Some(Type::Primitive(quote!(u16))),
-            "u32"  => Some(Type::Primitive(quote!(u32))),
-            "u64"  => Some(Type::Primitive(quote!(u64))),
-            "u128" => Some(Type::Primitive(quote!(u128))),
-            "i8"   => Some(Type::Primitive(quote!(i8))),
-            "i16"  => Some(Type::Primitive(quote!(i16))),
-            "i32"  => Some(Type::Primitive(quote!(i32))),
-            "i64"  => Some(Type::Primitive(quote!(i64))),
-            "i128" => Some(Type::Primitive(quote!(i128))),
-            "f32"  => Some(Type::Primitive(quote!(f32))),
-            "f64"  => Some(Type::Primitive(quote!(f64))),
-            _ => None
-        }
-    }
-}
-
-impl std::hash::Hash for Type {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            Type::Primitive(p) => format!("{:?}", p).hash(state),
-            Type::Custom(t) => t.borrow().hash(state),
-        }
-    }
-}
-
-impl PartialEq for Type {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Type::Primitive(t1), Type::Primitive(t2)) => {
-                format!("{:?}", t1) == format!("{:?}", t2)
-            }
-            (Type::Custom(t1), Type::Custom(t2)) => {
-                *t1.borrow() == *t2.borrow()
-            }
-            _ => false
-        }
-    } 
-}
-
-impl Eq for Type {}
 
 pub struct TypeSpec {
     supa: Option<Rc<RefCell<TypeSpec>>>,
@@ -127,7 +20,7 @@ pub struct TypeSpec {
     id: String,
     types: HashMap<String, Rc<RefCell<TypeSpec>>>,
     pub seq: Vec<Attribute>,
-    instances: HashMap<String, Instance>,
+    pub instances: HashMap<String, Instance>,
 }
 
 impl PartialEq for TypeSpec {
@@ -288,9 +181,15 @@ impl TypeSpec {
         let attr_type = self.seq.iter()
             .map(resolve_type);
 
+        let impl_instances = self.impl_instances();
+
         let structure = quote!(
             pub struct #name {
                 #(pub #attr: #attr_type,)*
+            }
+
+            impl #name {
+                #(#impl_instances)*
             }
         );
 
@@ -327,6 +226,27 @@ impl TypeSpec {
         structs
     }
 
+    fn impl_instances(&self) -> Vec<TokenStream> {
+        let mut instances = vec![];
+
+        for (id, inst) in self.instances.iter() {
+            let id: TokenStream = syn::parse_str(&id).unwrap();
+            let typ: TokenStream = syn::parse_str(&inst.attr.typ).unwrap();
+
+            if let Some(value) = &inst.value {
+                instances.push(quote!(
+                    pub fn #id(&self) -> #typ {
+                        #value
+                    }
+                ))
+            } else {
+                unimplemented!()
+            }
+        }
+
+        instances
+    }
+
     pub fn build_function_name(func: &str,
         parent_precursors: &[TokenStream],
         root_precursor: &Option<TokenStream>) -> TokenStream
@@ -337,6 +257,7 @@ impl TypeSpec {
         let parents: Vec<_> = parent_precursors.iter().map(tokenstream2str).collect();
         let parents = parents[..].join("__");
         let s = format!("{}___{}___{}", func, parents, root);
+        // TODO: let s = s.to_snake_case();
 
         syn::parse_str(&s).unwrap()
     }
