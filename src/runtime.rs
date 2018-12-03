@@ -2,6 +2,7 @@ type IoResult<'a, T> = nom::IResult<&'a [u8], T>;
 
 use nom::*;
 use tuple_utils::Prepend;
+use byteorder::WriteBytesExt;
 
 // Runtime Endian
 pub enum Endian {

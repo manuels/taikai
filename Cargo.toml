@@ -15,7 +15,9 @@ heck = "*"
 serde = "*"
 serde_yaml = "*"
 serde_derive = "*"
+itertools = "*"
 
 [dev-dependencies]
 nom = "*"
 tuple_utils = "*"
+byteorder = "*"

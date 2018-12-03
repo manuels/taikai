@@ -10,12 +10,16 @@ extern crate proc_macro2;
 #[macro_use] extern crate syn;
 extern crate heck;
 
+extern crate itertools;
+
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_yaml;
 
 mod type_spec;
 mod attribute;
+mod read;
+mod write;
 mod parser;
 
 use std::rc::Rc;
@@ -33,17 +37,18 @@ use crate::parser::parse;
 
 /*
     TODO
-    - yaml
     - instances
     - strings
     - encoding
-    - write
+    - write repeats
+    - write instances
     - enums
     - flags
     - byte array
     - process
     - bit-sized ints
     - repeat-until
+    - _io
 */
 
 #[proc_macro]
@@ -67,16 +72,17 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     let yaml: syn::LitStr = syn::parse2(quote!(#yaml)).unwrap();
 
     let scope: syn::Path = syn::parse2(quote!(#scope)).unwrap();
-    let scope = scope.segments.iter().map(|s| s.ident.to_string()).collect();
+    let scope: Vec<_> = scope.segments.iter().map(|s| s.ident.to_string()).collect();
 
-    let (meta, typ) = parse(scope, &yaml.value());
+    let (meta, typ) = parse(&scope, &yaml.value());
 
     let definition = TypeSpec::define(&[Rc::clone(&typ)]);
 
     let typ = typ.borrow();
     let root = typ.absolute_final_path();
     let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
-    let final_impl = typ.impl_final_read(&[], &None);
+    let final_read = typ.impl_final_read(&[], &None);
+    let final_write = typ.impl_final_write(&[], &None, &meta);
     
     let code = quote!(
         #runtime
@@ -84,11 +90,16 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         #definition
 
         #(#precursor_impls)*
-        #final_impl
+        #final_read
+        #final_write
 
         impl #root {
             pub fn read<'a>(_input: &'a [u8], _meta: &Meta, _ctx: &Context) -> IoResult<'a, Self> {
                 Self::read______None(_input, &(), &(), _meta, _ctx)
+            }
+
+            pub fn write<T: std::io::Write>(&self, _io: &mut T, _meta: &Meta, _ctx: &Context) -> std::io::Result<()> {
+                self.write______None(_io, &(), &(), _meta, _ctx)
             }
         }
     );

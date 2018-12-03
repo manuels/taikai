@@ -1,11 +1,13 @@
 #![feature(proc_macro_hygiene)]
+#![feature(try_blocks)]
 
 #[macro_use]
 extern crate taikai;
 
-extern crate tuple_utils;
 #[macro_use]
 extern crate nom;
+extern crate byteorder;
+extern crate tuple_utils;
 
 mod test_simple {
     test_simple!();
@@ -117,7 +119,7 @@ types:          #                     │
       header: #     <──────────────────────────────────┘
         seq:
           - id: j
-            type: u8
+            type: u16le
 ");
 
     #[test]
@@ -126,7 +128,10 @@ types:          #                     │
             endian: Endian::Big,
         };
         let ctx = Context {};
-        let (rest, obj) = TopLevel::read(&[0x01, 0x02, 0x03, 0x04], &meta, &ctx).unwrap();
+
+        let bytes = &[0x01, 0x02, 0x03, 0x04, 0x05];
+
+        let (rest, obj) = TopLevel::read(bytes, &meta, &ctx).unwrap();
         assert_eq!(obj, TopLevel {
             foo: __subtypes::Header {i: 0x01},
             bar: __subtypes::Body1 {
@@ -134,9 +139,14 @@ types:          #                     │
                 bar: __subtypes::Header {i: 0x03},
             },
             baz: __subtypes::Body2 {
-                foo: __subtypes::__subtypes::Header {j: 0x04}
+                foo: __subtypes::__subtypes::Header {j: 0x0504}
             },
         });
         assert_eq!(rest.len(), 0);
+
+        let mut out = vec![];
+        obj.write(&mut out, &meta, &ctx).unwrap();
+
+        assert_eq!(&out[..], bytes);
     }
 }

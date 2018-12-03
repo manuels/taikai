@@ -103,7 +103,7 @@ impl Into<type_spec::Endian> for Endian {
     }
 }
 
-pub fn parse(scope: Vec<String>, input: &str) -> (type_spec::Meta, Rc<RefCell<TypeSpec>>) {
+pub fn parse(scope: &[String], input: &str) -> (type_spec::Meta, Rc<RefCell<TypeSpec>>) {
     let obj: Root = serde_yaml::from_str(input).unwrap();
     let id = obj.meta.id.clone().unwrap_or_else(|| "root".to_owned());
 

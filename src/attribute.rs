@@ -43,6 +43,12 @@ pub struct Attribute {
     pub contents: Vec<u8>
 }
 
+pub struct Instance {
+    attr: Attribute,
+    pos: usize,
+    value: Option<TokenStream>,
+}
+
 impl Attribute {
     pub fn new<T: Into<String>, U: Into<String>>(
         id: T,
@@ -90,7 +96,7 @@ impl Attribute {
     }
 
     pub fn read_call(&self,
-        typ: Type,
+        typ: &Type,
         parent_precursors: &[TokenStream],
         root_precursor: TokenStream,
         meta: &Meta) -> TokenStream
@@ -127,7 +133,7 @@ impl Attribute {
             Type::Custom(typ) => {
                 // user-defined struct (e.g. super.header)
                 let typ = typ.as_ref().borrow().absolute_final_path();
-                let read_fn = TypeSpec::build_function_name("read", &parent_precursors, Some(root_precursor));
+                let read_fn = TypeSpec::build_function_name("read", &parent_precursors, &Some(root_precursor));
 
                 quote!(
                     apply!(#typ :: #read_fn, &_new_parents, _new_root, _meta, _ctx)
@@ -162,12 +168,102 @@ impl Attribute {
             do_parse!(_input, __v: #read >> (__v))
         }
     }
-}
 
-pub struct Instance {
-    attr: Attribute,
-    pos: usize,
-    value: Option<TokenStream>,
+    pub fn write_call(&self,
+        typ: &Type,
+        parents: &[TokenStream],
+        root: TokenStream,
+        meta: &Meta) -> TokenStream
+    {
+        let primitive_with_endian = |p: &&str| {
+            self.typ.starts_with(p) &&
+            self.typ.len() == p.len() + 2 &&
+            (self.typ.ends_with("le") || self.typ.ends_with("be"))
+        };
+    
+        let write_scalar = match typ {
+            Type::Primitive(_) if PRIMITIVES.iter().any(primitive_with_endian) => {
+                // primitive with endian (e.g. u8be)
+                let (styp, endian) = &self.typ.split_at(self.typ.len() - 2);
+    
+                let endian = match *endian {
+                    "le" => quote!(byteorder::LittleEndian),
+                    "be" => quote!(byteorder::BigEndian),
+                    _ => panic!("Endian '{}' in '{}' unkown!", endian, self.typ),
+                };
+
+                let func: TokenStream = syn::parse_str(&format!("write_{}", styp)[..]).unwrap();
+
+                let typ: TokenStream = syn::parse_str(&styp).unwrap();
+                if styp == &"u8" {
+                    quote!( (|attr: &#typ| _io.#func(*attr)) )
+                } else {
+                    quote!( (|attr: &#typ| _io.#func::<#endian>(*attr)) )
+                }
+            }
+            Type::Primitive(_) if PRIMITIVES.contains(&&self.typ[..]) => {
+                // primitive without endian (e.g. u8)
+                let call: TokenStream = syn::parse_str(&format!("_io.write_{}", self.typ)[..]).unwrap();
+
+                let code = match &meta.endian {
+                    _ if self.typ == "u8" => quote!( #call ),
+                    Endian::Big => quote!( #call::<byteorder::BigEndian> ),
+                    Endian::Little => quote!( #call::<byteorder::LittleEndian> ),
+                    Endian::Runtime(cond) => quote!(
+                        match #cond {
+                            Endian::Big => #call::<byteorder::BigEndian>,
+                            Endian::Little => #call::<byteorder::BigLittle>,
+                        }
+                    )
+                };
+
+                let typ: TokenStream = syn::parse_str(&self.typ).unwrap();
+                quote!( (|attr: &#typ| #code(*attr)) )
+            },
+            Type::Custom(_) => {
+                // user-defined struct (e.g. super.header)
+                let write_fn = TypeSpec::build_function_name("write", &parents, &Some(root));
+                let typ = typ.absolute_final_path();
+
+                quote!(
+                    (|attr: &#typ| -> std::io::Result<()> { attr.#write_fn(_io, &_new_parents, _new_root, _meta, _ctx) } )
+                )
+            }
+            _ => unimplemented!("Attribute::write_call(): type '{}' unknown", self.typ),
+        };
+
+        let attr: TokenStream = syn::parse_str(&self.id).unwrap();
+
+        let write_scalar = if self.contents.is_empty() {
+            write_scalar
+        } else {
+            let contents: TokenStream;
+            contents = syn::parse_str(&format!("&{:?}", self.contents)[..]).unwrap();
+            quote!( (|_attr| -> std::io::Result<()> { _io.write(&#contents) } ) )
+        };
+
+        let write_compound = match &self.repeat {
+            Repeat::NoRepeat => quote!( #write_scalar(&self.#attr)? ),
+            _ => quote!(
+                for _el in self.#attr {
+                    #write_scalar(_el)?
+                }
+            ),
+        };
+
+        let code = if let Some(cond) = &self.cond {
+            quote!(
+                if #cond {
+                    #write_compound
+                }
+            )
+        } else {
+            write_compound
+        };
+
+        quote!( try { #code } )
+    }
+
 }
 
 impl Instance {
