@@ -114,6 +114,7 @@ impl Type {
             "i128" => Some(Type::Primitive(quote!(i128))),
             "f32"  => Some(Type::Primitive(quote!(f32))),
             "f64"  => Some(Type::Primitive(quote!(f64))),
+            "str"  => Some(Type::Primitive(quote!(String))),
             _ => None
         }
     }

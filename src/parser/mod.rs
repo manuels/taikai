@@ -46,6 +46,8 @@ struct Root {
     meta: Meta,
     #[serde(flatten)]
     root: TypeDef,
+    #[serde(default)]
+    context: TypeDef,
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -54,6 +56,7 @@ struct TypeDef {
     types: HashMap<String, TypeDef>,
     seq: Vec<Attribute>,
     instances: HashMap<String, Instance>,
+    enums: HashMap<String, HashMap<String, String>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -126,13 +129,18 @@ impl Into<types::Endian> for Endian {
     }
 }
 
-pub fn parse(scope: &[String], input: &str) -> (types::Meta, Rc<RefCell<TypeSpec>>) {
+pub fn parse(scope: &[String], input: &str)
+    -> (types::Meta, Rc<RefCell<TypeSpec>>, Rc<RefCell<TypeSpec>>)
+{
     let obj: Root = serde_yaml::from_str(input).unwrap();
     let id = obj.meta.id.clone().unwrap_or_else(|| "root".to_owned());
 
-    let scope = scope.iter().map(|s| syn::parse_str(&s[..]).unwrap()).collect();
+    let scope: Vec<_> = scope.iter().map(|s| syn::parse_str(&s[..]).unwrap()).collect();
 
-    (obj.meta.into(), parse_type(id, scope, obj.root))
+    let ctx = parse_type("Context".to_string(), scope.clone(), obj.context);
+    let root = parse_type(id, scope, obj.root);
+
+    (obj.meta.into(), ctx, root)
 }
 
 fn parse_attribute(id: Option<String>, a: Attribute) -> attribute::Attribute {
@@ -224,5 +232,7 @@ fn parse_type(id: String, scope: Vec<TokenStream>, typ: TypeDef) -> Rc<RefCell<T
         id,
         types,
         seq,
-        instances)
+        instances,
+        typ.enums)
 }
+

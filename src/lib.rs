@@ -39,14 +39,11 @@ use crate::parser::parse;
 
 /*
     TODO
-    - instances
-    - strings
-    - encoding
+    - instances - pos
     - write repeats
     - write instances
     - enums
     - flags
-    - byte array
     - process
     - bit-sized ints
     - repeat-until
@@ -89,8 +86,9 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     let scope: syn::Path = syn::parse2(quote!(#scope)).unwrap();
     let scope: Vec<_> = scope.segments.iter().map(|s| s.ident.to_string()).collect();
 
-    let (meta, typ) = parse(&scope, &yaml.value());
+    let (meta, ctx, typ) = parse(&scope, &yaml.value());
 
+    let context = ctx.borrow().final_struct();
     let definition = TypeSpec::define(&[Rc::clone(&typ)]);
 
     let typ = typ.borrow();
@@ -102,6 +100,7 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     let code = quote!(
         #runtime
         
+        #context
         #definition
 
         #(#precursor_impls)*
@@ -111,12 +110,12 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         impl #root {
             pub fn read<'a>(_input: &'a [u8], _ctx: &Context) -> IoResult<'a, Self> {
                 let _meta = #meta;
-                Self::read______None(_input, &(), &(), &_meta, _ctx)
+                Self::read______none(_input, &(), &(), &_meta, _ctx)
             }
 
             pub fn write<T: std::io::Write>(&self, _io: &mut T, _ctx: &Context) -> std::io::Result<()> {
                 let _meta = #meta;
-                self.write______None(_io, &(), &(), &_meta, _ctx)
+                self.write______none(_io, &(), &(), &_meta, _ctx)
             }
         }
     );
@@ -142,6 +141,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         "bar".into(),
         HashMap::new(),
         vec![Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None)],
+        HashMap::new(),
         HashMap::new());
     let mut subtypes = HashMap::new();
     subtypes.insert("bar".into(), subtyp);
@@ -156,6 +156,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         "root".into(),
         subtypes,
         seq,
+        HashMap::new(),
         HashMap::new());
 
     let definition = TypeSpec::define(&[Rc::clone(&typ)]);
@@ -176,7 +177,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         impl #root {
             pub fn read<'a>(_input: &'a [u8], _ctx: &Context) -> IoResult<'a, Self> {
                 let _meta = #meta;
-                Self::read______None(_input, &(), &(), &_meta, _ctx)
+                Self::read______none(_input, &(), &(), &_meta, _ctx)
             }
         }
     );
@@ -205,6 +206,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
             "header".into(),
             HashMap::new(),
             vec![Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None)],
+            HashMap::new(),
             HashMap::new());
         subtypes.insert("header".into(), subtyp);
 
@@ -212,6 +214,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
             "body1".into(),
             HashMap::new(),
             vec![Attribute::new("foo", "super.header", Repeat::NoRepeat, None, vec![], None, None)],
+            HashMap::new(),
             HashMap::new());
         subtypes.insert("body1".into(), subtyp);
 
@@ -221,6 +224,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
                 "header".into(),
                 HashMap::new(),
                 vec![Attribute::new("j", "u8", Repeat::NoRepeat, None, vec![], None, None)],
+                HashMap::new(),
                 HashMap::new());
             subtypes2.insert("header".into(), subtyp);
         }
@@ -228,6 +232,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
             "body2".into(),
             subtypes2,
             vec![Attribute::new("foo", "header", Repeat::NoRepeat, None, vec![], None, None)],
+            HashMap::new(),
             HashMap::new());
         subtypes.insert("body2".into(), subtyp);
     }
@@ -242,6 +247,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         "root".into(),
         subtypes,
         seq,
+        HashMap::new(),
         HashMap::new());
     let definition = TypeSpec::define(&[Rc::clone(&typ)]);
 
@@ -261,7 +267,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         impl #root {
             pub fn read<'a>(_input: &'a [u8], _ctx: &Context) -> IoResult<'a, Self> {
                 let _meta = #meta;
-                Self::read______None(_input, &(), &(), &_meta, _ctx)
+                Self::read______none(_input, &(), &(), &_meta, _ctx)
             }
         }
     );
@@ -287,7 +293,8 @@ pub fn test_compound(_input: proc_macro::TokenStream) -> proc_macro::TokenStream
         "bar".into(),
         HashMap::new(),
         vec![Attribute::new("i", "u8", Repeat::Expr(quote!(3)), None, vec![], None, None)],
-            HashMap::new());
+        HashMap::new(),
+        HashMap::new());
     let mut subtypes = HashMap::new();
     subtypes.insert("bar".into(), subtyp);
 
@@ -304,6 +311,7 @@ pub fn test_compound(_input: proc_macro::TokenStream) -> proc_macro::TokenStream
         "root".into(),
         subtypes,
         seq,
+        HashMap::new(),
         HashMap::new());
 
     let definition = TypeSpec::define(&[Rc::clone(&typ)]);
@@ -324,7 +332,7 @@ pub fn test_compound(_input: proc_macro::TokenStream) -> proc_macro::TokenStream
         impl #root {
             pub fn read<'a>(_input: &'a [u8], _ctx: &Context) -> IoResult<'a, Self> {
                 let _meta = #meta;
-                Self::read______None(_input, &(), &(), &_meta, _ctx)
+                Self::read______none(_input, &(), &(), &_meta, _ctx)
             }
         }
     );

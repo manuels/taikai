@@ -105,7 +105,7 @@ impl Attribute {
             quote!{ () }
         };
 
-        let scalar = if self.size.is_some() {
+        let scalar = if self.size.is_some() && self.typ != "str" {
             quote!( std::vec::Vec<#scalar> )
         } else {
             scalar
@@ -136,10 +136,11 @@ impl Attribute {
         };
 
         let read_size = self.size.as_ref().map(|size| {
+            let to_vec = quote!( |v: &[u8]| -> std::result::Result<Vec<u8>, ()> { Ok(v.to_vec()) } );
             match &size.length {
-                Length::Size(len) => quote!( map!(take!(#len), |v| v.to_vec()) ),
-                Length::Terminator(chr) => quote!( map!(take_till!(|ch| ch == #chr), |v| v.to_vec()) ),
-                Length::Eos => quote!( map!(nom::rest, |v| v.to_vec()) ),
+                Length::Size(len) => quote!( map_res!(take!(#len), #to_vec) ),
+                Length::Terminator(chr) => quote!( map_res!(take_till!(|ch| ch == #chr), #to_vec) ),
+                Length::Eos => quote!( map_res!(nom::rest, #to_vec) ),
             }
         });
 
@@ -174,11 +175,15 @@ impl Attribute {
                 let read_size = read_size.unwrap();
 
                 let enc = match self.encoding.as_ref().unwrap_or(&meta.encoding) {
-                    Encoding::Fixed(enc) => quote!(enc),
                     Encoding::Runtime(enc) => enc.clone(),
+                    Encoding::Fixed(enc) => {
+                        let enc = format!("{:?}", enc);
+                        let enc: TokenStream = syn::parse_str(&enc[..]).unwrap();
+                        quote!(#enc) // convert to str token
+                    }
                 };
 
-                quote!( map!(#read_size, apply!(decode_string, #enc)) )
+                quote!( map_res!(#read_size, |v: Vec<u8>| decode_string(&v, &#enc)) )
             },
             Type::Custom(typ) => {
                 // user-defined struct (e.g. super.header)
@@ -203,7 +208,7 @@ impl Attribute {
         let read_compound = match &self.repeat {
             Repeat::NoRepeat => read_scalar,
             Repeat::Eos => quote!( many0!(complete!(#read_scalar)) ),
-            //Repeat::Until(cond) => quote!( repeat_while!(#cond, #read_scalar) ),
+            //Repeat::Until(cond) => quote!( repeat_while!(#cond, #read_scalar) ), // many_till?
             Repeat::Until(_) => unimplemented!("Repeat::Until not implemented, yet"),
             Repeat::Expr(expr) => quote!( count!(#read_scalar, #expr) ),
         };
@@ -276,7 +281,18 @@ impl Attribute {
                 quote!( (#[inline] |attr: &#typ| #code(*attr)) )
             },
             Type::Primitive(_) if self.typ == "str" => {
-                unimplemented!("str")
+                let enc = match self.encoding.as_ref().unwrap_or(&meta.encoding) {
+                    Encoding::Runtime(enc) => enc.clone(),
+                    Encoding::Fixed(enc) => {
+                        let enc = format!("{:?}", enc);
+                        let enc: TokenStream = syn::parse_str(&enc[..]).unwrap();
+                        quote!(#enc) // convert to str token
+                    }
+                };
+
+                quote!( (|s| -> std::io::Result<()> {
+                    encode_string(_io, s, &#enc)
+                }))
             },
             Type::Custom(_) => {
                 // user-defined struct (e.g. super.header)
@@ -301,7 +317,7 @@ impl Attribute {
         };
 
         let write_compound = match &self.repeat {
-            Repeat::NoRepeat => quote!( #write_scalar(&attr)? ),
+            Repeat::NoRepeat => quote!( (#write_scalar(&attr)?) ),
             _ => quote!(
                 for _el in attr {
                     #write_scalar(_el)?

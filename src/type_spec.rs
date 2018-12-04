@@ -3,7 +3,6 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use heck::CamelCase;
-use heck::SnakeCase;
 use proc_macro2::TokenStream;
 
 use crate::types::Type;
@@ -21,6 +20,7 @@ pub struct TypeSpec {
     types: HashMap<String, Rc<RefCell<TypeSpec>>>,
     pub seq: Vec<Attribute>,
     pub instances: HashMap<String, Instance>,
+    pub enums: HashMap<String, HashMap<String, String>>,
 }
 
 impl PartialEq for TypeSpec {
@@ -50,6 +50,7 @@ impl TypeSpec {
         types: HashMap<String, Rc<RefCell<TypeSpec>>>,
         seq: Vec<Attribute>,
         instances: HashMap<String, Instance>,
+        enums: HashMap<String, HashMap<String, String>>,
         ) -> Rc<RefCell<Self>>
     {
         let typ = TypeSpec {
@@ -60,6 +61,7 @@ impl TypeSpec {
             types,
             seq,
             instances,
+            enums,
         };
 
         let typ = Rc::new(RefCell::new(typ));
@@ -182,11 +184,14 @@ impl TypeSpec {
             .map(resolve_type);
 
         let impl_instances = self.impl_instances();
+        let enums = self.enums.iter().map(|(id, e)| Self::define_enum(id, e));
 
         let structure = quote!(
             pub struct #name {
                 #(pub #attr: #attr_type,)*
             }
+
+            #(#enums)*
 
             impl #name {
                 #(#impl_instances)*
@@ -257,7 +262,7 @@ impl TypeSpec {
         let parents: Vec<_> = parent_precursors.iter().map(tokenstream2str).collect();
         let parents = parents[..].join("__");
         let s = format!("{}___{}___{}", func, parents, root);
-        // TODO: let s = s.to_snake_case();
+        let s = s.to_lowercase();
 
         syn::parse_str(&s).unwrap()
     }
@@ -297,5 +302,9 @@ impl TypeSpec {
                 #(#subtypes)*
             }
         )
+    }
+
+    pub fn define_enum(id: &String, e: &HashMap<String, String>) -> TokenStream {
+        unimplemented!()
     }
 }
