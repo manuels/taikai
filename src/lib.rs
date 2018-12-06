@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 #![feature(bind_by_move_pattern_guards)]
 #![feature(custom_attribute)]
+#![feature(proc_macro_span)]
 //#![feature(trace_macros)] trace_macros!(true);
 
 #[macro_use] extern crate quote;
@@ -60,9 +61,20 @@ pub fn taikai_from_str(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 #[proc_macro]
 pub fn taikai_from_file(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let path: syn::LitStr = syn::parse2(input.into()).unwrap();
+    let path = path.value();
+    let path = std::path::Path::new(&path);
 
     use std::io::Read;
-    let mut f = std::fs::File::open(path.value()).unwrap();
+    let mut p = proc_macro::Span::call_site().source_file().path();
+    let path = if path.is_relative() {
+        p.pop();
+        p.push(path);
+        p.as_path()
+    } else {
+        path
+    };
+
+    let mut f = std::fs::File::open(path).unwrap();
     let mut yaml = String::new();
     f.read_to_string(&mut yaml).unwrap();
     
@@ -120,7 +132,7 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         }
     );
     
-    println!("{}", code);
+    //println!("{}", code);
 
     code.into()
 }
