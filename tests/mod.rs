@@ -111,7 +111,7 @@ types:          #                     │
 ");
 
     #[test]
-    fn test_cpio() {
+    fn test_levels() {
         let ctx = Context {};
 
         let bytes = &[0x01, 0x02, 0x03, 0x04, 0x05];
