@@ -9,6 +9,7 @@ use crate::types::Type;
 
 use crate::attribute::Attribute;
 use crate::attribute::Instance;
+use crate::enums::Enum;
 
 pub struct TypeSpec {
     supa: Option<Rc<RefCell<TypeSpec>>>,
@@ -20,7 +21,7 @@ pub struct TypeSpec {
     types: HashMap<String, Rc<RefCell<TypeSpec>>>,
     pub seq: Vec<Attribute>,
     pub instances: HashMap<String, Instance>,
-    pub enums: HashMap<String, HashMap<String, String>>,
+    pub enums: HashMap<String, Rc<RefCell<Enum>>>,
 }
 
 impl PartialEq for TypeSpec {
@@ -50,7 +51,7 @@ impl TypeSpec {
         types: HashMap<String, Rc<RefCell<TypeSpec>>>,
         seq: Vec<Attribute>,
         instances: HashMap<String, Instance>,
-        enums: HashMap<String, HashMap<String, String>>,
+        enums: HashMap<String, Rc<RefCell<Enum>>>,
         ) -> Rc<RefCell<Self>>
     {
         let typ = TypeSpec {
@@ -81,7 +82,7 @@ impl TypeSpec {
 
 
 impl TypeSpec {
-    pub fn resolve(&self, mut path: Vec<&str>) -> Type {
+    pub fn resolve_type(&self, mut path: Vec<&str>) -> Type {
         let orig_path = path.clone();
 
         if path.is_empty() {
@@ -98,34 +99,40 @@ impl TypeSpec {
 
         if first == "root" {
             if let Some(root) = &self.root {
-                return root.as_ref().borrow().resolve(path);
+                return root.as_ref().borrow().resolve_type(path);
             } else {
-                return self.resolve(path);
+                return self.resolve_type(path);
             }
         } else if first == "super" {
             if let Some(supa) = &self.supa {
-                return supa.as_ref().borrow().resolve(path);
+                return supa.as_ref().borrow().resolve_type(path);
             } else {
                 panic!("Could not resolve type '{}' in '{}': super does not exist!", orig_path.join("."), self.name());
             }
         }
 
-        let typ = self.types.get(first);
-        let typ = typ.unwrap_or_else(|| panic!("Could not resolve type '{}' in '{}'!", orig_path.join("."), self.name()));
+        let mut typ = if let Some(t) = self.types.get(first) {
+            Rc::clone(t)
+        } else {
+            panic!("Could not resolve type '{}' in '{}'!", orig_path.join("."), self.name());
+        };
 
-        let mut typ = Rc::clone(typ);
-
-        for el in path {
+        for el in path.into_iter() {
             typ = {
                 let this = typ.as_ref().borrow();
-                match this.types.get(el) {
-                    None => panic!("Could not resolve type '{}' in '{}' (at {})!", orig_path.join("."), self.name(), el),
-                    Some(t) => Rc::clone(t),
+                if let Some(t) = this.types.get(el) {
+                    Rc::clone(t)
+                } else {
+                    panic!("Could not resolve type '{}' in '{}' (at {})!", orig_path.join("."), self.name(), el)
                 }
             };
         }
 
         Type::Custom(typ)
+    }
+
+    pub fn resolve_enum(&self, mut path: Vec<&str>) -> Enum {
+        unimplemented!("type spec::resolve enum")
     }
 
     pub fn absolute_final_path(&self) -> TokenStream {
@@ -184,7 +191,7 @@ impl TypeSpec {
             .map(resolve_type);
 
         let impl_instances = self.impl_instances();
-        let enums = self.enums.iter().map(|(id, e)| Self::define_enum(id, e));
+        let enums = self.enums.iter().map(|(id, e)| Self::define_enum(id, &e.borrow().pairs[..]));
 
         let structure = quote!(
             pub struct #name {
@@ -245,7 +252,7 @@ impl TypeSpec {
                     }
                 ))
             } else {
-                unimplemented!()
+                unimplemented!("impl_instances")
             }
         }
 
@@ -304,7 +311,26 @@ impl TypeSpec {
         )
     }
 
-    pub fn define_enum(id: &String, e: &HashMap<String, String>) -> TokenStream {
-        unimplemented!()
+    pub fn define_enum(id: &String, e: &[(String, String)]) -> TokenStream {
+        let id = id.to_camel_case();
+        let id: syn::Ident = syn::parse_str(&id).unwrap();
+
+        let pairs = e.iter().map(|(key, value)| {
+            let key = key.to_camel_case();
+            let key: syn::Ident = syn::parse_str(&key).unwrap();
+
+            if value.to_string() == "_" {
+                quote!( #key )
+            } else {
+                quote!( #key = #value )
+            }
+        });
+
+        quote!(
+            #[derive(Debug, PartialEq)]
+            enum #id {
+                #(#pairs, )*
+            }
+        )
     }
 }

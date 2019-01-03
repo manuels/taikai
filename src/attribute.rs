@@ -29,6 +29,15 @@ pub enum Repeat {
     Until(TokenStream),
 }
 
+impl Repeat {
+    pub fn is_repeat(&self) -> bool {
+        match self {
+            Repeat::NoRepeat => false,
+            _ => true,
+        }
+    }
+}
+
 impl Default for Repeat {
     fn default() -> Self {
         Repeat::NoRepeat
@@ -39,6 +48,7 @@ impl Default for Repeat {
 pub struct Attribute {
     pub id: String,
     pub typ: String,
+    pub enum_: Option<String>,
     pub repeat: Repeat,
     pub cond: Option<TokenStream>,
     pub contents: Vec<u8>,
@@ -75,6 +85,7 @@ impl Attribute {
         cond: Option<TokenStream>,
         contents: Vec<u8>,
         encoding: Option<Encoding>,
+        enum_: Option<String>,
         size: Option<SizeProperties>) -> Self
     {
         Self {
@@ -84,6 +95,7 @@ impl Attribute {
             cond,
             encoding,
             contents,
+            enum_,
             size,
         }
     }
@@ -94,7 +106,7 @@ impl Attribute {
 
     pub fn resolve_scalar_type(&self, structure: &TypeSpec) -> Type {
         let path = self.typ.split('.').collect();
-        structure.resolve(path)
+        structure.resolve_type(path)
     }
 
     pub fn absolute_path_of_compound_type(&self, structure: &TypeSpec) -> TokenStream {
@@ -105,7 +117,7 @@ impl Attribute {
             quote!{ () }
         };
 
-        let scalar = if self.size.is_some() && self.typ != "str" {
+        let scalar = if self.size.is_some() && self.typ != "str" && !self.repeat.is_repeat() {
             quote!( std::vec::Vec<#scalar> )
         } else {
             scalar
@@ -193,8 +205,16 @@ impl Attribute {
                 quote!(
                     apply!(#typ :: #read_fn, &_new_parents, _new_root, _meta, _ctx)
                 )
-            }
+            },
             _ => unimplemented!("Attribute::read_call(): type '{}' unknown", self.typ),
+        };
+
+        let read_scalar = if let Some(ref e) = self.enum_ {
+            unimplemented!()
+            //let e = typ.resolve_enum(e);
+            //e.match_from_primitive(read_scalar)
+        } else {
+            read_scalar
         };
 
         let read_scalar = if self.contents.is_empty() {
@@ -211,6 +231,19 @@ impl Attribute {
             //Repeat::Until(cond) => quote!( repeat_while!(#cond, #read_scalar) ), // many_till?
             Repeat::Until(_) => unimplemented!("Repeat::Until not implemented, yet"),
             Repeat::Expr(expr) => quote!( count!(#read_scalar, #expr) ),
+        };
+
+        let read_compound = if let Some(SizeProperties { length: Length::Size(len), .. }) = &self.size {
+            match typ {
+                Type::Custom(_) => {
+                    quote! (
+                        flat_map!(take!(#len), #read_compound)
+                    )
+                }
+                _ => read_compound
+            }
+        } else {
+            read_compound
         };
 
         let read = if let Some(cond) = &self.cond {
@@ -302,7 +335,7 @@ impl Attribute {
                 quote!(
                     (#[inline] |attr: &#typ| -> std::io::Result<()> { attr.#write_fn(_io, &_new_parents, _new_root, _meta, _ctx) } )
                 )
-            }
+            },
             _ => unimplemented!("Attribute::write_call(): type '{}' unknown", self.typ),
         };
 
@@ -358,12 +391,13 @@ impl Instance {
         cond: Option<TokenStream>,
         contents: Vec<u8>,
         enc: Option<Encoding>,
+        enum_: Option<String>,
         size_props: Option<SizeProperties>) -> Self
     {
         Self {
             pos,
             value,
-            attr: Attribute::new(id, typ, repeat, cond, contents, enc, size_props),
+            attr: Attribute::new(id, typ, repeat, cond, contents, enc, enum_, size_props),
         }
     }
 

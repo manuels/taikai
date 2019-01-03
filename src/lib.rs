@@ -3,6 +3,7 @@
 #![feature(bind_by_move_pattern_guards)]
 #![feature(custom_attribute)]
 #![feature(proc_macro_span)]
+#![feature(try_blocks)]
 //#![feature(trace_macros)] trace_macros!(true);
 
 #[macro_use] extern crate quote;
@@ -11,6 +12,7 @@ extern crate proc_macro2;
 #[macro_use] extern crate syn;
 extern crate heck;
 
+#[macro_use] extern crate failure;
 extern crate itertools;
 
 extern crate serde;
@@ -23,12 +25,14 @@ mod attribute;
 mod read;
 mod write;
 mod parser;
+mod enums;
 
 use std::rc::Rc;
 
-use proc_macro2::TokenStream;
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
+
+use failure::ResultExt;
 
 use crate::attribute::Repeat;
 use crate::attribute::Attribute;
@@ -40,6 +44,7 @@ use crate::parser::parse;
 
 /*
     TODO
+    - switch-on types
     - instances - pos
     - write repeats
     - write instances
@@ -53,88 +58,108 @@ use crate::parser::parse;
 
 #[proc_macro]
 pub fn taikai_from_str(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input: TokenStream = input.into();
-    let code = quote!( taikai_from_str2!(crate::test_macro, #input); );
-    code.into()
+    let res: Result<proc_macro::TokenStream, failure::Error> = try {
+        let parser = Punctuated::<syn::Expr, Token![,]>::parse_separated_nonempty;
+        let mut args = parser.parse(input).context("Error parsing macro arguments")?;
+
+        let path = args.pop().ok_or(format_err!("Missing path to yaml file as macro argument"))?;
+        let scope = args.pop().ok_or(format_err!("Missing module path as macro argument"))?.into_value();
+
+        let code = quote!( taikai_from_str2!(#scope, #path); );
+        code.into()
+    };
+    res.unwrap()
 }
 
 #[proc_macro]
 pub fn taikai_from_file(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let path: syn::LitStr = syn::parse2(input.into()).unwrap();
-    let path = path.value();
-    let path = std::path::Path::new(&path);
+    let res: Result<proc_macro::TokenStream, failure::Error> = try {
+        let parser = Punctuated::<syn::Expr, Token![,]>::parse_separated_nonempty;
+        let mut args = parser.parse(input).context("Error parsing macro arguments")?;
 
-    use std::io::Read;
-    let mut p = proc_macro::Span::call_site().source_file().path();
-    let path = if path.is_relative() {
-        p.pop();
-        p.push(path);
-        p.as_path()
-    } else {
-        path
+        let path = args.pop().ok_or(format_err!("Missing path to yaml file as macro argument"))?;
+        let scope = args.pop().ok_or(format_err!("Missing module path as macro argument"))?.into_value();
+
+        let path: syn::LitStr = syn::parse2(quote!(#path)).context("Could not parse yaml path")?;
+        let path = path.value();
+        let path = std::path::Path::new(&path);
+
+        let mut p = proc_macro::Span::call_site().source_file().path();
+        let path = if path.is_relative() {
+            p.pop();
+            p.push(path);
+            p.as_path()
+        } else {
+            path
+        };
+
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).context("Error opening yaml file")?;
+        let mut yaml = String::new();
+        f.read_to_string(&mut yaml).context("Error reading yaml file")?;
+        
+        let code = quote!( taikai_from_str2!(#scope, #yaml); );
+        code.into()
     };
-
-    let mut f = std::fs::File::open(path).unwrap();
-    let mut yaml = String::new();
-    f.read_to_string(&mut yaml).unwrap();
-    
-    let code = quote!( taikai_from_str2!(crate::test_cpio, #yaml); );
-    code.into()
+    res.unwrap()
 }
 
 #[proc_macro]
 pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    use proc_macro2::TokenStream;
-    let runtime: TokenStream = syn::parse_str(include_str!("runtime.rs")).unwrap();
+    let res: Result<proc_macro::TokenStream, failure::Error> = try {
+        use proc_macro2::TokenStream;
+        let runtime: TokenStream = syn::parse_str(include_str!("runtime.rs")).context("Error reading taikai runtime")?;
 
-    let parser = Punctuated::<syn::Expr, Token![,]>::parse_separated_nonempty;
-    let mut args = parser.parse(input).unwrap();
+        let parser = Punctuated::<syn::Expr, Token![,]>::parse_separated_nonempty;
+        let mut args = parser.parse(input).context("Error parsing macro arguments")?;
 
-    let yaml = args.pop().unwrap();
-    let scope = args.pop().unwrap().into_value();
+        let yaml = args.pop().ok_or(format_err!("Missing yaml data as macro argument"))?;
+        let scope = args.pop().ok_or(format_err!("Missing module path as macro argument"))?.into_value();
 
-    let yaml: syn::LitStr = syn::parse2(quote!(#yaml)).unwrap();
+        let yaml: syn::LitStr = syn::parse2(quote!(#yaml)).context("Macro argument for yaml data should be a string")?;
 
-    let scope: syn::Path = syn::parse2(quote!(#scope)).unwrap();
-    let scope: Vec<_> = scope.segments.iter().map(|s| s.ident.to_string()).collect();
+        let scope: syn::Path = syn::parse2(quote!(#scope)).context("Macro argument for module path should be a module path")?;
+        let scope: Vec<_> = scope.segments.iter().map(|s| s.ident.to_string()).collect();
 
-    let (meta, ctx, typ) = parse(&scope, &yaml.value());
+        let (meta, ctx, typ) = parse(&scope, &yaml.value());
 
-    let context = ctx.borrow().final_struct();
-    let definition = TypeSpec::define(&[Rc::clone(&typ)]);
+        let context = ctx.borrow().final_struct();
+        let definition = TypeSpec::define(&[Rc::clone(&typ)]);
 
-    let typ = typ.borrow();
-    let root = typ.absolute_final_path();
-    let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
-    let final_read = typ.impl_final_read(&[], &None);
-    let final_write = typ.impl_final_write(&[], &None, &meta);
-    
-    let code = quote!(
-        #runtime
+        let typ = typ.borrow();
+        let root = typ.absolute_final_path();
+        let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
+        let final_read = typ.impl_final_read(&[], &None);
+        let final_write = typ.impl_final_write(&[], &None, &meta);
         
-        #context
-        #definition
+        let code = quote!(
+            #runtime
+            
+            #context
+            #definition
 
-        #(#precursor_impls)*
-        #final_read
-        #final_write
+            #(#precursor_impls)*
+            #final_read
+            #final_write
 
-        impl #root {
-            pub fn read<'a>(_input: &'a [u8], _ctx: &Context) -> IoResult<'a, Self> {
-                let _meta = #meta;
-                Self::read______none(_input, &(), &(), &_meta, _ctx)
+            impl #root {
+                pub fn read<'a>(_input: &'a [u8], _ctx: &Context) -> IoResult<'a, Self> {
+                    let _meta = #meta;
+                    Self::read______none(_input, &(), &(), &_meta, _ctx)
+                }
+
+                pub fn write<T: std::io::Write>(&self, _io: &mut T, _ctx: &Context) -> std::io::Result<()> {
+                    let _meta = #meta;
+                    self.write______none(_io, &(), &(), &_meta, _ctx)
+                }
             }
+        );
+        
+        //println!("{}", code);
 
-            pub fn write<T: std::io::Write>(&self, _io: &mut T, _ctx: &Context) -> std::io::Result<()> {
-                let _meta = #meta;
-                self.write______none(_io, &(), &(), &_meta, _ctx)
-            }
-        }
-    );
-    
-    //println!("{}", code);
-
-    code.into()
+        code.into()
+    };
+    res.unwrap()
 }
 
 #[proc_macro]
@@ -152,16 +177,16 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let subtyp = TypeSpec::new(vec![quote!(crate), quote!(test_simple), quote!(__subtypes)],
         "bar".into(),
         HashMap::new(),
-        vec![Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None)],
+        vec![Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None, None)],
         HashMap::new(),
         HashMap::new());
     let mut subtypes = HashMap::new();
     subtypes.insert("bar".into(), subtyp);
 
     let seq = vec![
-        Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None), 
-        Attribute::new("baz", "bar", Repeat::NoRepeat, None, vec![], None, None),
-        Attribute::new("j", "u8", Repeat::NoRepeat, None, vec![], None, None)
+        Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None, None), 
+        Attribute::new("baz", "bar", Repeat::NoRepeat, None, vec![], None, None, None),
+        Attribute::new("j", "u8", Repeat::NoRepeat, None, vec![], None, None, None)
     ];
 
     let typ = TypeSpec::new(vec![quote!(crate), quote!(test_simple)],
@@ -217,7 +242,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         let subtyp = TypeSpec::new(vec![quote!(crate), quote!(test_resolve), quote!(__subtypes)],
             "header".into(),
             HashMap::new(),
-            vec![Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None)],
+            vec![Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None, None)],
             HashMap::new(),
             HashMap::new());
         subtypes.insert("header".into(), subtyp);
@@ -225,7 +250,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         let subtyp = TypeSpec::new(vec![quote!(crate), quote!(test_resolve), quote!(__subtypes)],
             "body1".into(),
             HashMap::new(),
-            vec![Attribute::new("foo", "super.header", Repeat::NoRepeat, None, vec![], None, None)],
+            vec![Attribute::new("foo", "super.header", Repeat::NoRepeat, None, vec![], None, None, None)],
             HashMap::new(),
             HashMap::new());
         subtypes.insert("body1".into(), subtyp);
@@ -235,7 +260,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
             let subtyp = TypeSpec::new(vec![quote!(crate), quote!(test_resolve), quote!(__subtypes)],
                 "header".into(),
                 HashMap::new(),
-                vec![Attribute::new("j", "u8", Repeat::NoRepeat, None, vec![], None, None)],
+                vec![Attribute::new("j", "u8", Repeat::NoRepeat, None, vec![], None, None, None)],
                 HashMap::new(),
                 HashMap::new());
             subtypes2.insert("header".into(), subtyp);
@@ -243,16 +268,16 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         let subtyp = TypeSpec::new(vec![quote!(crate), quote!(test_resolve), quote!(__subtypes)],
             "body2".into(),
             subtypes2,
-            vec![Attribute::new("foo", "header", Repeat::NoRepeat, None, vec![], None, None)],
+            vec![Attribute::new("foo", "header", Repeat::NoRepeat, None, vec![], None, None, None)],
             HashMap::new(),
             HashMap::new());
         subtypes.insert("body2".into(), subtyp);
     }
 
     let seq = vec![
-        Attribute::new("foo", "header", Repeat::NoRepeat, None, vec![], None, None),
-        Attribute::new("bar", "body1", Repeat::NoRepeat, None, vec![], None, None),
-        Attribute::new("baz", "body2", Repeat::NoRepeat, None, vec![], None, None)
+        Attribute::new("foo", "header", Repeat::NoRepeat, None, vec![], None, None, None),
+        Attribute::new("bar", "body1", Repeat::NoRepeat, None, vec![], None, None, None),
+        Attribute::new("baz", "body2", Repeat::NoRepeat, None, vec![], None, None, None)
     ];
 
     let typ = TypeSpec::new(vec![quote!(crate), quote!(test_resolve)],
@@ -304,19 +329,19 @@ pub fn test_compound(_input: proc_macro::TokenStream) -> proc_macro::TokenStream
     let subtyp = TypeSpec::new(vec![quote!(crate), quote!(test_compound), quote!(__subtypes)],
         "bar".into(),
         HashMap::new(),
-        vec![Attribute::new("i", "u8", Repeat::Expr(quote!(3)), None, vec![], None, None)],
+        vec![Attribute::new("i", "u8", Repeat::Expr(quote!(3)), None, vec![], None, None, None)],
         HashMap::new(),
         HashMap::new());
     let mut subtypes = HashMap::new();
     subtypes.insert("bar".into(), subtyp);
 
     let seq = vec![
-        Attribute::new("i", "u16be", Repeat::NoRepeat, None, vec![], None, None), 
-        Attribute::new("j", "u16le", Repeat::NoRepeat, None, vec![], None, None), 
-        Attribute::new("baz", "bar", Repeat::NoRepeat, Some(quote!(self.i == 0x0102)), vec![], None, None),
-        Attribute::new("k", "u8le", Repeat::Expr(quote!(1)), Some(quote!(self.i == 0x9999)), vec![], None, None),
-        Attribute::new("l", "u8le", Repeat::NoRepeat, Some(quote!(true)), vec![], None, None),
-        Attribute::new("bytes", "u8", Repeat::Expr(quote!(2)), Some(quote!(true)), b"abc".to_vec(), None, None),
+        Attribute::new("i", "u16be", Repeat::NoRepeat, None, vec![], None, None, None), 
+        Attribute::new("j", "u16le", Repeat::NoRepeat, None, vec![], None, None, None), 
+        Attribute::new("baz", "bar", Repeat::NoRepeat, Some(quote!(self.i == 0x0102)), vec![], None, None, None),
+        Attribute::new("k", "u8le", Repeat::Expr(quote!(1)), Some(quote!(self.i == 0x9999)), vec![], None, None, None),
+        Attribute::new("l", "u8le", Repeat::NoRepeat, Some(quote!(true)), vec![], None, None, None),
+        Attribute::new("bytes", "u8", Repeat::Expr(quote!(2)), Some(quote!(true)), b"abc".to_vec(), None, None, None),
     ];
 
     let typ = TypeSpec::new(vec![quote!(crate), quote!(test_compound)],

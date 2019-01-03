@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use proc_macro2::TokenStream;
 
 use crate::types;
+use crate::enums;
 use crate::type_spec::TypeSpec;
 use crate::attribute;
 
@@ -70,6 +71,9 @@ struct Attribute {
     doc: (),
     #[serde(skip)]
     doc_ref: (),
+
+    #[serde(rename="enum")]
+    pub enum_: Option<String>,
 
     repeat: Option<Repeat>,
     repeat_expr: Option<String>,
@@ -150,7 +154,7 @@ fn parse_attribute(id: Option<String>, a: Attribute) -> attribute::Attribute {
     let str_props = match &typ[..] {
         "str"
         | "strz"
-        | "u8" if a.size.is_some() || a.size_eos => {
+        | _ if a.size.is_some() || a.size_eos => {
             let length = if &typ[..] == "strz" {
                 attribute::Length::Terminator(0)
             } else {
@@ -209,7 +213,7 @@ fn parse_attribute(id: Option<String>, a: Attribute) -> attribute::Attribute {
         }
     });
 
-    attribute::Attribute::new(a.id.or(id).unwrap(), typ, repeat, cond, a.contents, enc, str_props)
+    attribute::Attribute::new(a.id.or(id).unwrap(), typ, repeat, cond, a.contents, enc, a.enum_, str_props)
 }
 
 fn parse_type(id: String, scope: Vec<TokenStream>, typ: TypeDef) -> Rc<RefCell<TypeSpec>> {
@@ -228,11 +232,22 @@ fn parse_type(id: String, scope: Vec<TokenStream>, typ: TypeDef) -> Rc<RefCell<T
         (id, attribute::Instance::from_attr(attr, pos, value))
     }).collect();
 
+    // flip yaml 'value: key' to rust (key, value)
+    let enums = typ.enums.into_iter().map(|(id, e)| {
+        let pairs = e.into_iter().map(|(value, key)| (key, value)).collect();
+        let e = enums::Enum {
+            pairs,
+            id: id.clone(),
+            scope: scope.clone(),
+        };
+
+        (id, Rc::new(RefCell::new(e)))
+    }).collect();
+
     TypeSpec::new(scope,
         id,
         types,
         seq,
         instances,
-        typ.enums)
+        enums)
 }
-

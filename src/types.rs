@@ -134,10 +134,10 @@ impl PartialEq for Type {
         match (self, other) {
             (Type::Primitive(t1), Type::Primitive(t2)) => {
                 format!("{:?}", t1) == format!("{:?}", t2)
-            }
+            },
             (Type::Custom(t1), Type::Custom(t2)) => {
                 *t1.borrow() == *t2.borrow()
-            }
+            },
             _ => false
         }
     } 
