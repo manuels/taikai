@@ -13,9 +13,9 @@ proc-macro = true
 
 [dependencies]
 failure = "0.1.8"
-quote = "0.6.10"
-proc-macro2 = "0.4.24"
-syn = "0.15.21"
+quote = "1.0.7"
+proc-macro2 = "1.0.18"
+syn = "1.0.33"
 heck = "0.3.1"
 serde = "1.0.114"
 serde_yaml = "0.8.13"
