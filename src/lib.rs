@@ -1,7 +1,5 @@
 #![recursion_limit = "1024"]
 #![allow(dead_code)]
-#![feature(bind_by_move_pattern_guards)]
-#![feature(custom_attribute)]
 #![feature(proc_macro_span)]
 #![feature(try_blocks)]
 //#![feature(trace_macros)] trace_macros!(true);
@@ -97,7 +95,7 @@ pub fn taikai_from_file(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         let mut f = std::fs::File::open(path).context("Error opening yaml file")?;
         let mut yaml = String::new();
         f.read_to_string(&mut yaml).context("Error reading yaml file")?;
-        
+
         let code = quote!( taikai_from_str2!(#scope, #yaml); );
         code.into()
     };
@@ -131,10 +129,10 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
         let final_read = typ.impl_final_read(&[], &None);
         let final_write = typ.impl_final_write(&[], &None, &meta);
-        
+
         let code = quote!(
             #runtime
-            
+
             #context
             #definition
 
@@ -154,7 +152,7 @@ pub fn taikai_from_str2(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 }
             }
         );
-        
+
         //println!("{}", code);
 
         code.into()
@@ -184,7 +182,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     subtypes.insert("bar".into(), subtyp);
 
     let seq = vec![
-        Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None, None), 
+        Attribute::new("i", "u8", Repeat::NoRepeat, None, vec![], None, None, None),
         Attribute::new("baz", "bar", Repeat::NoRepeat, None, vec![], None, None, None),
         Attribute::new("j", "u8", Repeat::NoRepeat, None, vec![], None, None, None)
     ];
@@ -202,10 +200,10 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let root = typ.absolute_final_path();
     let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
     let final_impl = typ.impl_final_read(&[], &None);
-    
+
     let code = quote!(
         #runtime
-        
+
         #definition
 
         #(#precursor_impls)*
@@ -218,7 +216,7 @@ pub fn test_simple(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }
     );
-    
+
     //println!("{}", code);
 
     code.into()
@@ -292,10 +290,10 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     let root = typ.absolute_final_path();
     let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
     let final_impl = typ.impl_final_read(&[], &None);
-    
+
     let code = quote!(
         #runtime
-        
+
         #definition
 
         #(#precursor_impls)*
@@ -308,7 +306,7 @@ pub fn test_resolve(_input: proc_macro::TokenStream) -> proc_macro::TokenStream 
             }
         }
     );
-    
+
     //println!("{}", code);
 
     code.into()
@@ -336,8 +334,8 @@ pub fn test_compound(_input: proc_macro::TokenStream) -> proc_macro::TokenStream
     subtypes.insert("bar".into(), subtyp);
 
     let seq = vec![
-        Attribute::new("i", "u16be", Repeat::NoRepeat, None, vec![], None, None, None), 
-        Attribute::new("j", "u16le", Repeat::NoRepeat, None, vec![], None, None, None), 
+        Attribute::new("i", "u16be", Repeat::NoRepeat, None, vec![], None, None, None),
+        Attribute::new("j", "u16le", Repeat::NoRepeat, None, vec![], None, None, None),
         Attribute::new("baz", "bar", Repeat::NoRepeat, Some(quote!(self.i == 0x0102)), vec![], None, None, None),
         Attribute::new("k", "u8le", Repeat::Expr(quote!(1)), Some(quote!(self.i == 0x9999)), vec![], None, None, None),
         Attribute::new("l", "u8le", Repeat::NoRepeat, Some(quote!(true)), vec![], None, None, None),
@@ -357,10 +355,10 @@ pub fn test_compound(_input: proc_macro::TokenStream) -> proc_macro::TokenStream
     let root = typ.absolute_final_path();
     let precursor_impls = typ.impl_precursor_reads(&[], &None, &meta);
     let final_impl = typ.impl_final_read(&[], &None);
-    
+
     let code = quote!(
         #runtime
-        
+
         #definition
 
         #(#precursor_impls)*
@@ -373,7 +371,7 @@ pub fn test_compound(_input: proc_macro::TokenStream) -> proc_macro::TokenStream
             }
         }
     );
-    
+
     //println!("{}", code);
 
     code.into()
