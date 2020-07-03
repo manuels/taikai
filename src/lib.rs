@@ -4,15 +4,6 @@
 #![feature(try_blocks)]
 //#![feature(trace_macros)] trace_macros!(true);
 
-#[macro_use] extern crate quote;
-extern crate proc_macro;
-extern crate proc_macro2;
-#[macro_use] extern crate syn;
-extern crate heck;
-
-#[macro_use] extern crate failure;
-extern crate itertools;
-
 mod types;
 mod type_spec;
 mod attribute;
@@ -23,10 +14,13 @@ mod enums;
 
 use std::rc::Rc;
 
+use syn::Token;
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 
-use failure::ResultExt;
+use failure::{ResultExt, format_err};
+
+use quote::quote;
 
 use crate::attribute::Repeat;
 use crate::attribute::Attribute;

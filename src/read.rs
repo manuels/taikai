@@ -1,4 +1,5 @@
 use proc_macro2::TokenStream;
+use quote::quote;
 
 use crate::type_spec::TypeSpec;
 use crate::types::Meta;
@@ -52,7 +53,7 @@ impl TypeSpec {
         let mut reads = vec![];
         let mut previous_attributes = vec![];
 
-        let iter = vec![self.absolute_first_precursor_path()].into_iter();        
+        let iter = vec![self.absolute_first_precursor_path()].into_iter();
         let precursors1 = iter.chain(self.seq.iter().map(|a| self.absolute_precursor_path(&a.id)).rev().skip(1).rev());
         let precursors2 = self.seq.iter().map(|a| self.absolute_precursor_path(&a.id));
 

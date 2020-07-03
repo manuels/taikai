@@ -4,6 +4,7 @@ use std::cell::RefCell;
 
 use proc_macro2::TokenStream;
 use serde::Deserialize;
+use quote::quote;
 
 use crate::types;
 use crate::enums;

@@ -4,6 +4,7 @@ use std::cell::RefCell;
 
 use heck::CamelCase;
 use proc_macro2::TokenStream;
+use quote::quote;
 
 use crate::types::Type;
 
