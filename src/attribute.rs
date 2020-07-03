@@ -237,7 +237,7 @@ impl Attribute {
             match typ {
                 Type::Custom(_) => {
                     quote! (
-                        flat_map!(take!(#len), #read_compound)
+                        flat_map!(take!(#len), #read_compound)// FIXME: `len` expands to `self.len`, which cause borrow of self in nom 5.x
                     )
                 }
                 _ => read_compound
@@ -268,7 +268,7 @@ impl Attribute {
             self.typ.len() == p.len() + 2 &&
             (self.typ.ends_with("le") || self.typ.ends_with("be"))
         };
-    
+
         let write_scalar = match typ {
             Type::Primitive(_) if self.typ == "u8" && self.size.is_some() => {
                 quote!(
@@ -278,7 +278,7 @@ impl Attribute {
             Type::Primitive(_) if PRIMITIVES.iter().any(primitive_with_endian) => {
                 // primitive with endian (e.g. u8be)
                 let (styp, endian) = &self.typ.split_at(self.typ.len() - 2);
-    
+
                 let endian = match *endian {
                     "le" => quote!(byteorder::LittleEndian),
                     "be" => quote!(byteorder::BigEndian),
