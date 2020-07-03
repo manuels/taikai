@@ -13,10 +13,6 @@ extern crate heck;
 #[macro_use] extern crate failure;
 extern crate itertools;
 
-extern crate serde;
-#[macro_use] extern crate serde_derive;
-extern crate serde_yaml;
-
 mod types;
 mod type_spec;
 mod attribute;
