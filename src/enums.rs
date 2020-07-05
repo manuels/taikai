@@ -1,4 +1,5 @@
 use proc_macro2::TokenStream;
+use quote::quote;
 
 use heck::CamelCase;
 
@@ -87,7 +88,7 @@ impl PartialEq for Enum {
         let other_scope = format!("{:?}", other.scope);
 
         self.id == other.id && self_scope == other_scope
-    } 
+    }
 }
 
 impl Eq for Enum {}

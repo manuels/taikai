@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use proc_macro2::TokenStream;
+use quote::quote;
 
 use crate::type_spec::TypeSpec;
 
@@ -140,7 +141,7 @@ impl PartialEq for Type {
             },
             _ => false
         }
-    } 
+    }
 }
 
 impl Eq for Type {}

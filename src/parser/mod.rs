@@ -3,6 +3,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use proc_macro2::TokenStream;
+use serde::Deserialize;
+use quote::quote;
 
 use crate::types;
 use crate::enums;
@@ -10,7 +12,7 @@ use crate::type_spec::TypeSpec;
 use crate::attribute;
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "kebab-case")] 
+#[serde(rename_all = "kebab-case")]
 struct Meta {
     id: Option<String>,
     endian: Endian,
@@ -35,7 +37,7 @@ enum Endian {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "lowercase")] 
+#[serde(rename_all = "lowercase")]
 enum Repeat {
     Expr,
     Until,
@@ -61,10 +63,10 @@ struct TypeDef {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "kebab-case")] 
+#[serde(rename_all = "kebab-case")]
 struct Attribute {
     id: Option<String>,
-    #[serde(rename = "type")] 
+    #[serde(rename = "type")]
     typ: Option<String>,
 
     #[serde(skip)]
@@ -78,14 +80,14 @@ struct Attribute {
     repeat: Option<Repeat>,
     repeat_expr: Option<String>,
     repeat_until: Option<String>,
-    
-    #[serde(rename = "if")] 
+
+    #[serde(rename = "if")]
     cond: Option<String>,
-    #[serde(default)] 
+    #[serde(default)]
     contents: Vec<u8>,
 
     size: Option<String>,
-    #[serde(default)] 
+    #[serde(default)]
     size_eos: bool,
     process: Option<String>,
 
@@ -93,7 +95,7 @@ struct Attribute {
 
     terminator: Option<u8>,
     consume: Option<bool>,
-    #[serde(default)] 
+    #[serde(default)]
     include: bool,
     eos_error: Option<bool>,
 }
@@ -203,7 +205,7 @@ fn parse_attribute(id: Option<String>, a: Attribute) -> attribute::Attribute {
             attribute::Repeat::Until(expr)
         },
     };
-    
+
     let enc = a.encoding.map(|enc| {
         if encoding_rs::Encoding::for_label_no_replacement(enc.as_bytes()).is_some() {
             types::Encoding::Fixed(enc.as_bytes().to_vec())

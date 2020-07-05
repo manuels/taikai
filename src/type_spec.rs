@@ -4,6 +4,7 @@ use std::cell::RefCell;
 
 use heck::CamelCase;
 use proc_macro2::TokenStream;
+use quote::quote;
 
 use crate::types::Type;
 
@@ -30,7 +31,7 @@ impl PartialEq for TypeSpec {
         let other_scope = format!("{:?}", other.scope);
 
         self.id == other.id && self_scope == other_scope
-    } 
+    }
 }
 
 impl Eq for TypeSpec {}
@@ -182,7 +183,7 @@ impl TypeSpec {
     pub fn final_struct(&self) -> TokenStream {
         let name = self.name();
         let attr = self.seq.iter().map(|a| a.name());
-        
+
         let resolve_type = |a: &Attribute| -> TokenStream {
             a.absolute_path_of_compound_type(self)
         };
@@ -306,7 +307,7 @@ impl TypeSpec {
             }
 
             pub mod __subtypes {
-                #(#subtypes)*
+                #subtypes
             }
         )
     }

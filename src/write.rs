@@ -1,6 +1,7 @@
 use proc_macro2::TokenStream;
 
 use itertools::Itertools;
+use quote::quote;
 
 use crate::type_spec::TypeSpec;
 use crate::types::Meta;
